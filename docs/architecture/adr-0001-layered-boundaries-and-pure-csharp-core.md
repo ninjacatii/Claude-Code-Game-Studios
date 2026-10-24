@@ -232,8 +232,10 @@ layout never reads State; the view reacts to events.
 - `GameSession` receives already-constructed services. It only holds and wires
   them; it must never `new` a gameplay service. This keeps `GameBootstrap` the
   sole composition root while allowing a pure C# session container.
-- It constructs services in `_Ready` after the viewport size is known. Children
-  must not use services until `Bind()` is called.
+- It constructs services in `_Ready` using the initial window size. The size is
+  not final: `TableLayout.UpdateViewport` and the TableView transform are
+  refreshed on `Window.SizeChanged` (ADR-0004). Children must not use services
+  until `Bind()` is called.
 - Presentation adapters subscribe in `Bind()` and unsubscribe in
   `_ExitTree()`.
 - No Autoload, no static service locator, no mutable global state.

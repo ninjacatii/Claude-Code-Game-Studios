@@ -122,7 +122,7 @@ It creates, in order:
 2. `CardDeckModel`
 3. `DealGenerator`
 4. `RulesMoveValidator`
-5. `TableLayout` (with the final viewport size)
+5. `TableLayout` (with the initial window size; updated on `Window.SizeChanged` per ADR-0004)
 6. `UndoHistory(model, commandGate, logger)`
 7. `GameStateMachine(model, deal, rules, undo, commandGate, logger)`
 8. `HintSystem(rules)`
@@ -142,7 +142,9 @@ It creates, in order:
 
 `GameBootstrap` lifecycle:
 
-- Constructs the object graph in `_Ready` (the viewport size is final there).
+- Constructs the object graph in `_Ready` with the initial window size. The
+  size is not final: `TableLayout.UpdateViewport` and the TableView transform
+  refresh on `Window.SizeChanged` (ADR-0004).
 - Calls `Bind()` on `TableView`, `ToolbarController` and `DragInputAdapter`.
 - Optionally calls `State.NewGame(1)` **after** `Bind()` if auto-start is chosen
   (see architecture QQ-01). No event may be raised before views are bound.
@@ -322,6 +324,9 @@ public void DragInputAdapter.Bind(
   `ICardDeckModel`.
 - `Bind()` is idempotent: it unsubscribes previous handlers before subscribing
   new ones, or asserts it is called once.
+- `DragInputAdapter` calls `IDragDropController.NotifyLayoutChanged(logicalPointer)`
+  after a window resize; it is a command, not an event, and is not in the
+  event matrix.
 - Presentation subscribes in `Bind()` and unsubscribes in `_ExitTree()`.
 - `GameBootstrap` does not unsubscribe Presentation handlers; each owner does.
 
@@ -444,7 +449,12 @@ public interface IUndoHistory
 
 public interface IHintSystem { /* RequestHint/Reset */ }
 public interface IStatistics { /* OnGameStarted/OnGameWon/GetStats/ResetStats */ }
-public interface IDragDropController { /* OnPointer*/ + events */ }
+
+public interface IDragDropController
+{
+    void NotifyLayoutChanged(Vector2 logicalPointer);   // command, not event
+    // OnPointer* + drag events
+}
 
 
 namespace FreeCell.Presentation;
@@ -609,7 +619,7 @@ public partial class GameBootstrap : Node { /* constructs, binds, disposes */ }
 |---|---|
 | `GameSession` becomes a second constructor | Constructor takes already-built services; architecture check + review |
 | State placed in Core | `IGameStateMachine` lives in Feature; Feature may reference Core, not vice versa |
-| TableLayout/Drag missing from session | Session includes both; `GameBootstrap._Ready` constructs them with final viewport |
+| TableLayout/Drag missing from session | Session includes both; `GameBootstrap._Ready` constructs them with the initial window size and updates on resize |
 | `GodotGameLogger` in App uses Godot | Place in `src/Presentation/Logging/`; App `GameSession` stays pure |
 | Undo/GDD ordering conflict | Sync `undo-history.md` and `game-state-machine.md`; `OnUndoPerformed` returns void |
 | Load-to-Won emits `GameWon` | `LoadGame` only raises `StateChanged`/`GameLoaded`; explicit test |

@@ -284,6 +284,30 @@ api_decisions:
     added: 2026-10-24
     revised: ""
 
+  - purpose: window_coordinate_model
+    status: active
+    api: "display/window/stretch/mode=disabled; manual 1280x720 letterbox in TableLayout; Window.Size authoritative; menu bar in identity CanvasLayer"
+    not: "canvas_items/expand or viewport/keep for the whole game; GetVisibleRect as authority; scaled menu bar"
+    adr: docs/architecture/adr-0004-window-stretch-and-coordinate-model.md
+    reason: "Keeps the menu bar at 28 window px and the table on a fixed logical canvas."
+    referenced_by:
+      - docs/architecture/adr-0004-window-stretch-and-coordinate-model.md
+      - docs/architecture/architecture.md
+    added: 2026-10-24
+    revised: ""
+
+  - purpose: hidpi_atlas_scale
+    status: active
+    api: "atlas_scale = table_scale * device_factor; device_factor from a ScreenGetDpi/96 startup probe; fallback 1.0"
+    not: "DisplayServer.ScreenGetScale on Windows (always 1.0); ContentScaleFactor as OS DPI"
+    adr: docs/architecture/adr-0004-window-stretch-and-coordinate-model.md
+    reason: "Windows ScreenGetScale cannot distinguish 2x/3x; the probe is measured and may mark TR-007 NOT ASSESSED."
+    referenced_by:
+      - docs/architecture/adr-0004-window-stretch-and-coordinate-model.md
+      - docs/architecture/architecture.md
+    added: 2026-10-24
+    revised: ""
+
 # Example:
 #
 # api_decisions:
@@ -363,6 +387,27 @@ forbidden_patterns:
     description: "Do not serialize ModelSnapshot, GameSnapshot or Card domain types directly; use explicit DTOs with the shared serializer options."
     why: "Domain types carry ImmutableArray and enum details that System.Text.Json handles inconsistently; DTOs make the payload versioned and auditable."
     adr: docs/architecture/adr-0003-model-snapshot-and-serialization-schema.md
+    added: 2026-10-24
+
+  - pattern: screen_get_scale_on_windows
+    status: active
+    description: "Do not use DisplayServer.ScreenGetScale() as a Windows HiDPI factor; it returns 1.0 on Windows."
+    why: "Using it silently selects the 1x atlas on 150/200% displays and fails the device-pixel readability requirement."
+    adr: docs/architecture/adr-0004-window-stretch-and-coordinate-model.md
+    added: 2026-10-24
+
+  - pattern: content_scale_factor_not_one
+    status: active
+    description: "ContentScaleMode must be Disabled and ContentScaleFactor must be 1.0; they are not OS DPI factors."
+    why: "A non-1 factor changes the window/logical/input relationship and invalidates TableLayout and menu-bar formulas."
+    adr: docs/architecture/adr-0004-window-stretch-and-coordinate-model.md
+    added: 2026-10-24
+
+  - pattern: scaled_menu_canvaslayer
+    status: active
+    description: "The menu bar must not sit in a scaled Node2D, SubViewport or transformed CanvasLayer; its CanvasLayer must have identity transform/scale/offset and FollowViewportEnabled=false."
+    why: "Scaling the menu breaks the 28-window-pixel contract and causes overlap with the top row at minimum size."
+    adr: docs/architecture/adr-0004-window-stretch-and-coordinate-model.md
     added: 2026-10-24
 
 # Example:

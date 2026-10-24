@@ -99,10 +99,11 @@ Drag & Drop Interaction 把鼠标按下、移动与释放翻译成空当接龙�
 
 - MVP 仅鼠标；触摸/手柄不支持。
 - 输入在进入拖拽逻辑前统一转换为**逻辑坐标**（`to_logical`）；接口参数命名为 `logical_pos`。逻辑坐标 = 卡牌布局坐标系，已包含 stretch/scale，不含 letterbox 黑边；屏幕/窗口/设备像素不出现在公式内。
+- 使用模式匹配 `InputEventMouse`，读取 `InputEventMouse.Position`（视口坐标；`InputEvent` 基类没有 `Position`）。窗口尺寸权威源是 `GetWindow().Size`；`ContentScaleMode=Disabled`、`ContentScaleFactor=1.0` 时必须成立。
 - Table Rendering 负责把当前拉伸/缩放换算成卡牌矩形。
 - 牌索引统一 **0-based、自底向顶**；`top_index = height − 1`；Table Rendering 必须使用同一约定。
 - 命中测试优先最上层卡牌，其次是空牌堆区域；拖拽层对命中测试透明。
-- 使用 `_unhandled_input`（或等价路径），避免工具栏 UI 吞掉事件。
+- 使用 `_unhandled_input`（或等价路径），避免菜单栏/对话框 UI 吞掉事件；不得用 `_input` 抢在 GUI 之前处理。不要把 `GetLocalMousePosition()`（子节点局部坐标）送入 `to_logical`。
 - `State.can_accept_moves()` 为 false 时忽略所有牌面输入。
 - 无悬停、无高亮、无光标变化。
 
@@ -151,6 +152,7 @@ Drag & Drop Interaction 把鼠标按下、移动与释放翻译成空当接龙�
 **接口契约**：
 
 - `on_pointer_down(logical_pos) / on_pointer_move(logical_pos) / on_pointer_up(logical_pos) / on_cancel()`
+- `notify_layout_changed(logical_pointer)`：窗口 resize 后由 DragInputAdapter 调用；重算 `grab_offset`，非拖拽时 no-op
 - `is_dragging() -> bool`
 - `get_drag_unit() -> MoveUnit | null`
 - 事件：`DragStarted`、`DragMoved`、`DragDropped`、`DragCancelled`、`MoveExecuted`、`MoveRejected`
@@ -179,7 +181,7 @@ The drag_threshold formula is defined as:
 
 **Output Range:** 恒为 4（min = max）。换算成物理像素为 `4 × display_scale`；比较也在逻辑空间进行。恰好 4.0 逻辑像素不触发拖拽（严格 `>`）。
 
-**Example:** 1280×720 布局在 1920×1080 窗口 → scale 1.5 → 阈值 6 物理像素；在 960×540 窗口 → 3 物理像素。
+**Example:** 1280×720 布局在 1920×1080 窗口 → scale 1.5 → 阈值 6 窗口像素；在 960×540 窗口 → 3 窗口像素。阈值比较始终在逻辑坐标；`atlas_scale`/device factor 不参与。
 
 ### The grab_offset formula
 
@@ -277,7 +279,7 @@ The snap_back_duration formula is defined as:
 
 - **If 坐标空间混用（屏幕坐标减逻辑矩形）**: 抓取偏移会带上变换误差，拖拽起手跳变；实现必须只使用逻辑坐标，负的 `grab_offset` 断言失败而不是 clamp。
 - **If `card_top_left` 在隐藏源牌之后采样**: 会拿到拖拽层/隐藏表示；必须在按下时、隐藏前缓存。
-- **If 拖拽期间窗口缩放或布局重排**: 按 `new_card_size / old_card_size` 重新缩放 `grab_offset`；若源牌矩形已不存在，取消拖拽。
+- **If 拖拽期间窗口缩放或布局重排**: TableLayout 更新后，DragInputAdapter 以当前指针重算 `logical_pointer`，调用 `notify_layout_changed`；Drag 用新的 `card_rect(source, clicked_index)` 重算 `grab_offset = logical_pointer − card_top_left`，保持牌在指针下；指针在画布外时保留外推逻辑坐标，不 clamp。非拖拽时 no-op。
 - **If Table Rendering 使用 top-down 索引**: `drag_unit_length` 会取错后缀；接口契约固定 0-based、自底向顶，集成测试必须覆盖。
 - **If 按下的牌到顶牌不是合法序列**: 不开始拖拽；释放按点击处理。
 - **If 按在回收单元上**: 不开始拖拽（Rules `FOUNDATION_LOCKED`）。
@@ -335,6 +337,7 @@ The snap_back_duration formula is defined as:
 **接口契约**：
 
 - `on_pointer_down(logical_pos) / on_pointer_move(logical_pos) / on_pointer_up(logical_pos) / on_cancel()`
+- `notify_layout_changed(logical_pointer)`：窗口 resize 后由 DragInputAdapter 调用；重算 `grab_offset`，非拖拽时 no-op
 - `is_dragging() -> bool`
 - `get_drag_unit() -> MoveUnit | null`
 - 事件：`DragStarted`、`DragMoved`、`DragDropped`、`DragCancelled`、`MoveExecuted`、`MoveRejected`
@@ -457,6 +460,7 @@ The snap_back_duration formula is defined as:
 
 - **GIVEN** 按下后欧氏位移恰好 4.0 逻辑像素，或绕圈但离按下点始终 ≤4，**WHEN** 指针移动，**THEN** 不开始拖拽；**GIVEN** 单次移动事件使位移 >4（如 3,4 → 5.0），**THEN** 进入 `Dragging`、创建拖拽层、隐藏源牌；距离是直线距离，不是累计路径。
 - **GIVEN** 按下点 (140,230)、点击牌左上角 (100,200)，**WHEN** 拖拽层显示，**THEN** `grab_offset = (40,30)`（在隐藏源牌前采样）；指针到 (612,311) 时拖拽层左上角为 (572,281)，不 clamp，牌与指针 1:1。
+- **GIVEN** 拖拽中窗口从 1280×720 缩放到 1920×1080，**WHEN** `Window.SizeChanged` 完成 reflow，**THEN** `notify_layout_changed(logical_pointer)` 用新 `card_rect` 重算 `grab_offset`，牌保持 under-pointer、不跳变；指针在画布外时保留外推逻辑坐标；非拖拽时 no-op。
 - **GIVEN** 7 张列、索引 0–6，按在索引 3，**WHEN** 后缀 3–6 通过 `Rules.valid_sequence`，**THEN** 移动单元为 4 张，长度 `top_index − clicked_index + 1 = 4`，整个拖拽期间固定。
 - **GIVEN** 点击后缀不是合法序列、按在回收单元、按在空牌堆，或 `State.can_accept_moves()` 为 false，**WHEN** 指针移动，**THEN** 不开始拖拽；释放按点击处理。
 

@@ -6,7 +6,7 @@
 - **Last Updated**: 2026-10-24
 - **Engine**: Godot 4.7.2 / C# / .NET 8 / Forward+
 - **GDDs Covered**: `card-deck-model`, `deal-generator`, `rules-move-validator`, `game-state-machine`, `drag-drop-interaction`, `undo-history`, `hint-system`, `statistics-records`, `table-rendering-layout`, `toolbar-menus`
-- **ADRs Referenced**: ADR-0001 (Proposed), ADR-0002 (Proposed), ADR-0003 (Proposed); no Accepted ADRs yet
+- **ADRs Referenced**: ADR-0001 (Proposed), ADR-0002 (Proposed), ADR-0003 (Proposed), ADR-0004 (Proposed); no Accepted ADRs yet
 - **TD-ARCHITECTURE**: 2026-10-24 — skipped — lean mode
 - **LP-FEASIBILITY**: 2026-10-24 — skipped — lean mode
 
@@ -28,7 +28,7 @@
 | Rendering | Forward+ (Windows D3D12 default since 4.6) |
 | LLM training covers | approximately Godot 4.3 (cutoff 2025-05) |
 | Post-cutoff versions | 4.4, 4.5, 4.6, 4.7 — all HIGH risk |
-| Installed at pin time | **NOT DETERMINED** — no Godot found on PATH or usual install locations |
+| Installed at pin time | `D:/Godot_v4.7.2-stable_mono_win64/Godot_v4.7.2-stable_mono_win64.exe` — 4.7.2 stable mono; .NET SDK 8.0.426 |
 | gdUnit4 | 6.2.x lists 4.5–4.7.1; 6.2.2 observed running on 4.7.2 |
 
 The installed-version gap is **unknown**, not absent. This document must not be
@@ -53,8 +53,9 @@ read as proof that any Godot 4.7 API compiles on the target machine.
 - **Font hinting.** 4.7 changed the dynamic-font hinting default. Card rank/suit
   textures are pre-baked, so this is only a risk if dynamic fonts are used for
   card faces.
-- **HiDPI / OS display scale.** Atlas selection and `DisplayServer.screen_get_scale()`
-  need measurement on the target machine.
+- **HiDPI / OS display scale.** `DisplayServer.screen_get_scale()` returns 1.0
+  on Windows; atlas selection needs a `ScreenGetDpi/96` probe and a measured
+  `device_factor` (ADR-0004).
 - **C# test execution.** The framework's CI command uses gdUnit4's GDScript
   runner. Whether C# tests run through gdUnit4 on 4.7.2, or pure C# unit tests
   need a separate `dotnet test` project, is unresolved (ADR-0005).
@@ -220,7 +221,7 @@ written.
 
 | Module | Owns | Exposes | Consumes | Engine APIs / risk |
 |---|---|---|---|---|
-| **Table View** | Card/empty-slot drawing, atlas, drag layer visuals, hint highlight, source hiding | `Bind`, `Redraw`, `SetHintHighlight/ClearHint`, `IDragView` | Model read-only, Table Layout, State/Undo/Drag events | ⚠️ `Node2D`, `Sprite2D`, `AtlasTexture`, `Viewport.SizeChanged`, `DisplayServer.ScreenGetScale()` — HIGH (4.7 line AA, stretch defaults, HiDPI) |
+| **Table View** | Card/empty-slot drawing, atlas, drag layer visuals, hint highlight, source hiding | `Bind`, `Redraw`, `SetHintHighlight/ClearHint`, `IDragView`, Node2D scale/offset | Model read-only, Table Layout, State/Undo/Drag events | ⚠️ `Node2D`, `Sprite2D`, `AtlasTexture`, `Window.SizeChanged`, `ScreenGetDpi` probe — HIGH (4.7 line AA, stretch defaults, Windows HiDPI) |
 | **Drag Input Adapter** | Godot input capture, device-type checks, window→logical conversion, Esc/right-click/focus-loss cancel | `_UnhandledInput`; pure `DragDropController` calls | Godot `InputEvent`, Table Layout | ⚠️ `Node._UnhandledInput`, `InputEventMouseButton/Motion/Key`, `DoubleClick`, device type checks — HIGH (4.7 device IDs, 4.6 dual focus); C# binding names **NEEDS VERIFICATION** |
 | **Toolbar & Menus** | Menu bar, dialogs, banners, title, command gating, string table | `Bind`, `RefreshCommands`, dialog commands | State/Undo/Hint/Stats/Table View/Drag events | ⚠️ `Control`, `MenuBar`, `PopupMenu`, `AcceptDialog`, `ConfirmationDialog`, `LineEdit`, `CanvasLayer`, `Window.Title`, focus — HIGH (4.6 dual focus, 4.7 stretch/accessibility type) |
 | **Animation / Audio / Settings / Accessibility** | Not designed | Placeholder interfaces only | — | Not assessed; must not bind APIs before their GDDs and ADRs |
@@ -269,7 +270,8 @@ Main.tscn
     -> new GodotGameLogger()
     -> new CommandGate()
     -> new CardDeckModel()
-    -> new DealGenerator(), new RulesMoveValidator(), new TableLayout(viewport size)
+    -> assert ContentScaleMode=Disabled, ContentScaleFactor=1.0
+    -> new DealGenerator(), new RulesMoveValidator(), new TableLayout(initial Window.Size)
     -> new UndoHistory(model, gate, logger)
     -> new GameStateMachine(model, deal, rules, undo, gate, logger)
     -> new HintSystem(rules), new Statistics()
@@ -279,6 +281,7 @@ Main.tscn
     -> Toolbar.Bind(state, undo, hint, stats, tableView, drag)
     -> DragInputAdapter.Bind(drag, layout)
     -> set minimum window size 1024x576
+    -> connect Window.SizeChanged once
     -> initial state NoGame; optionally State.NewGame(1) after Bind per QQ-01
 
 GameBootstrap._ExitTree()
@@ -291,6 +294,9 @@ GameBootstrap._ExitTree()
 - `GameBootstrap` is the only place that knows every concrete type and the only
   constructor. `GameSession` is a pure C# container that holds and wires the
   constructed services.
+- `Window.Size` is the authoritative window size; `GetVisibleRect()` is only a
+  cross-check. The initial size is not final; `Window.SizeChanged` updates
+  TableLayout and the TableView transform (ADR-0004).
 - No event may be raised before `Bind()`; if auto-start is chosen, call
   `State.NewGame(1)` after all three `Bind()` calls.
 - Presentation adapters subscribe in `Bind()` and unsubscribe in `_ExitTree()`;
@@ -393,18 +399,25 @@ Toolbar
 ### 4.6 Window Resize
 
 ```text
-Viewport.SizeChanged
-  -> TableLayout.UpdateViewport(w, h)
+Window.SizeChanged
+  -> TableLayout.UpdateViewport(Window.Size.X, Window.Size.Y)
     -> recompute scale/offset/card rects once
-    -> LayoutChanged
-      -> TableView.Reposition()
-      -> DragDropController.OnLayoutChanged()   [recompute grab offset]
+    -> TableView.ApplyTransform(scale, offset)
+    -> logicalPointer = TableLayout.ToLogical(current pointer)
+    -> DragDropController.NotifyLayoutChanged(logicalPointer)
 ```
 
-- All main-thread.
-- The menu bar uses window coordinates and does not scale with Table Layout.
+- All main-thread; one reflow per resize event; no per-frame work.
+- `Window.Size` is authoritative; `GetVisibleRect()` is a cross-check only.
+- The menu bar uses window coordinates in an identity CanvasLayer and does not
+  scale with Table Layout.
 - Minimum window 1024×576; below that, scale is clamped to 0.8, the canvas is
   cropped, and a warning is logged.
+- During a drag, `NotifyLayoutChanged` recomputes `grab_offset` from the current
+  pointer and the new `CardRect`, keeping the card under the pointer. Outside
+  the canvas, the logical position is extrapolated and release is illegal.
+- `NotifyLayoutChanged` is a command, not an event; it is not in the event
+  matrix.
 
 ### 4.7 Save/Load (Vertical Slice, not implemented)
 
@@ -717,7 +730,7 @@ public interface IDragDropController
     void OnPointerMove(Vector2 logicalPosition);
     void OnPointerUp(Vector2 logicalPosition);
     void OnCancel();
-    void OnLayoutChanged();
+    void NotifyLayoutChanged(Vector2 logicalPointer);   // command, not event
 
     bool IsDragging { get; }
     Move? DragUnit { get; }
@@ -739,6 +752,9 @@ points. `DragInputAdapter : Node` in Presentation owns `_UnhandledInput`, the
 **Caller invariants:**
 
 - `OnPointer*` receives logical coordinates; indices are 0-based bottom-to-top.
+- `NotifyLayoutChanged` is called after a resize; it recomputes `grab_offset`
+  from the current logical pointer and the new `CardRect`, or no-ops when not
+  dragging. Outside-canvas pointers are extrapolated, never clamped.
 - A drag starts only when `State.CanAcceptMoves()` is true.
 - The legal path is exactly `record -> move -> commit -> State.OnMoveApplied`.
   State is called directly; `MoveExecuted` is a post-state notification for
@@ -799,6 +815,8 @@ public partial class TableView : Node2D, IDragView
 
 - Binds `ICardDeckReadModel`, never the mutable `ICardDeckModel` and never
   `FreeCell.App.GameSession`.
+- Applies `TableLayout.Scale`/`Offset` to its Node2D transform; no Camera2D or
+  transformed parent. The menu CanvasLayer stays identity.
 - Read-only model; never mutates State or Undo.
 - Redraws in the same frame as State/Undo/Drag events.
 - Source hiding and drag-layer display are same-frame; legal drops are 0 ms.
@@ -834,8 +852,9 @@ public partial class ToolbarController : Control
   text mapping lives in one place.
 - Modal dialogs suppress global shortcuts; the specified commands are disabled
   during a drag; focus returns to the table after closing.
-- Menu bar height is 28 window pixels; it uses window coordinates and does not
-  scale with Table Layout.
+- Menu bar target height is 28 window pixels; the actual `MenuBar.Size.Y` is
+  measured and used for clearance. It uses window coordinates in an identity
+  CanvasLayer and does not scale with Table Layout.
 
 ### 5.13 Cross-Boundary Constraints
 
@@ -849,6 +868,13 @@ public partial class ToolbarController : Control
   expose a mutable internal collection.
 - Engine APIs appear only in Presentation and the Drag adapter; Core/Foundation
   stay portable and unit-testable.
+- `Window.Size` is the authoritative window size; `GetVisibleRect()` is a
+  cross-check. `ContentScaleMode` must be `Disabled` and `ContentScaleFactor`
+  must be 1.0.
+- The menu `CanvasLayer` has identity transform/scale/offset and
+  `FollowViewportEnabled = false`; no Camera2D or transformed parent.
+- `NotifyLayoutChanged` is a command on `IDragDropController`, not an event; it
+  is called after resize and recomputes `grab_offset`.
 
 ---
 
@@ -856,7 +882,7 @@ public partial class ToolbarController : Control
 
 ### 6.1 ADR Audit
 
-`docs/architecture/adr-*.md`: **3 ADRs**, all `Proposed`. Engine compatibility,
+`docs/architecture/adr-*.md`: **4 ADRs**, all `Proposed`. Engine compatibility,
 version and GDD linkage are present; none is `Accepted` yet.
 
 | ADR | Engine Compat | Version | GDD Linkage | Conflicts | Valid |
@@ -864,6 +890,7 @@ version and GDD linkage are present; none is `Accepted` yet.
 | ADR-0001 Layered boundaries and pure C# core | ✅ | ✅ | ✅ | None | ⚠️ Proposed |
 | ADR-0002 Session composition, model ownership, and event contract | ✅ | ✅ | ✅ | None | ⚠️ Proposed |
 | ADR-0003 Model snapshot and serialization schema | ✅ | ✅ | ✅ | None | ⚠️ Proposed |
+| ADR-0004 Window stretch and coordinate model | ✅ | ✅ | ✅ | None | ⚠️ Proposed |
 
 ### 6.2 Technical Requirements Baseline
 
@@ -897,10 +924,9 @@ list is in Appendix A.
 | Toolbar & Menus | 001–009 | 0/9 |
 
 **Interpretation.** 0/76 formally covered because no ADR is `Accepted` and
-`/architecture-review` has not built the matrix yet. ADR-0001, ADR-0002 and
-ADR-0003 are written `Proposed` and are expected to cover the layer,
-composition, event and snapshot requirements; ADR-0004/0005 complete the
-must-have decision set.
+`/architecture-review` has not built the matrix yet. ADR-0001–ADR-0004 are
+written `Proposed` and are expected to cover the layer, composition, event,
+snapshot and coordinate requirements; ADR-0005 completes the must-have set.
 
 ---
 
@@ -913,7 +939,7 @@ must-have decision set.
 | **1** | **ADR-0001 — Layered boundaries and pure C# core.** *(written, Proposed)* Presentation → Feature → Core → Foundation; Core/Foundation do not reference Godot; Table splits into Layout + View; DI instead of global singletons. | Dependency rules for all 76 requirements; unblocks unit testing and parallel implementation of every module. |
 | **2** | **ADR-0002 — Session composition, model ownership, and event contract.** *(written, Proposed)* One `CardDeckModel` instance; `GameBootstrap` constructs and `GameSession` wires; direct typed C# events; State↔Undo decoupled via `IUndoHistory` + `UndoPerformed`; shared `CommandGate`; single-threaded synchronous flow. | State 001/003/008, Undo 003/006, Statistics 002/007, Drag 005/006/008, Table 005/008, Toolbar 009. |
 | **3** | **ADR-0003 — Model snapshot and serialization schema.** *(written, Proposed)* Immutable `ModelSnapshot`, `Revision`, schema version, atomic restore, structural sharing, explicit DTOs, invariant validation on load. | Card 001–006/008, Undo 001/005/006, State 005, Deal 004. |
-| **4** | **ADR-0004 — Window stretch and coordinate model.** `stretch/mode="disabled"`; manual 1280×720 letterbox; menu bar in window coordinates; Table Layout in logical coordinates; minimum window 1024×576. | Table 001/006/007/008, Toolbar 001/003/004/009, Drag 002/008. **HIGH RISK — verify against 4.7 stretch defaults.** |
+| **4** | **ADR-0004 — Window stretch and coordinate model.** *(written, Proposed)* `stretch/mode="disabled"`; manual 1280×720 letterbox; `Window.Size` authority; menu bar in window coordinates; Table Layout in logical coordinates; minimum window 1024×576. | Table 001/006/007/008, Toolbar 001/003/004/009, Drag 002/008. **HIGH RISK — verify against 4.7 stretch defaults and Windows DPI.** |
 | **5** | **ADR-0005 — C# test execution strategy.** Pure C# core tests (xUnit or gdUnit4 C#); Godot integration tests (gdUnit4 headless); screenshot evidence paths; CI command. | Verification method for every logic requirement; unblocks `/test-setup` and the first story. |
 
 ### 7.2 Should Have Before the Relevant System Is Built
@@ -975,8 +1001,8 @@ must-have decision set.
 | QQ-02 | Statistics loss vs “no punishment” tension (W1) | Medium | Playtest / Statistics design review |
 | QQ-03 | Hint Tier 1 may recommend unsafe foundation moves (W2) | Medium | Playtest / Hint rule review |
 | QQ-04 | Menu “新局” vs Won dialog “新局” naming (W6) | Low | Copy/UX decision |
-| QQ-05 | `project.godot` has no `[display]` section; stretch not pinned | **High (blocks UI)** | ADR-0004 |
-| QQ-06 | Godot 4.7.2 not installed/located; cannot compile-verify locally | **High** | Install Godot .NET; mark all engine APIs `NEEDS VERIFICATION` until then |
+| QQ-05 | `project.godot` has no `[display]` section; stretch not pinned | **High (blocks UI)** | ADR-0004 fixes the model; first story writes `[display]` and startup assertions |
+| QQ-06 | Godot 4.7.2 not installed/located; cannot compile-verify locally | **Resolved** | Installed at `D:/Godot_v4.7.2-stable_mono_win64`; export/DPI probes still required |
 | QQ-07 | C# test execution method (xUnit vs gdUnit4 C#) undecided | **High** | ADR-0005 / `/test-setup` |
 | QQ-08 | Table GDD said Table reads State; this architecture uses Table View subscriptions | Medium | ADR-0001/0007 confirmation; behavior unchanged |
 | QQ-09 | Model needs `Revision`/change notification for redraw; not explicit in GDD | Low | ADR-0003 confirmation; additive interface |
@@ -1143,9 +1169,9 @@ story.
 | 5 | `FileAccess.store_*` return type | 4.4 returns `bool`; save code must check it | `breaking-changes.md` |
 | 6 | `Control.accessibility_live` enum | 4.7 type moved to `AccessibilityServer` | `breaking-changes.md`, `modules/ui.md` |
 | 7 | `RichTextLabel.add_image/update_image` | 4.7 parameter changes; only if used | `breaking-changes.md` |
-| 8 | `DisplayServer.screen_get_scale()` / `Window` min size | HiDPI and minimum-window behavior need runtime verification | `modules/ui.md`, `modules/rendering.md` |
+| 8 | `ScreenGetScale` / `ScreenGetDpi` / `Window.MinSize` / `ContentScaleFactor` | Windows returns 1.0 for `ScreenGetScale`; DPI and min-size behavior need local probes | ADR-0004, `modules/ui.md`, `modules/rendering.md` |
 | 9 | gdUnit4 6.2.2 on 4.7.2 | README lists up to 4.7.1; engine reference observed 6.2.2 | `current-best-practices.md` |
-| 10 | Installed Godot version | `NOT DETERMINED`; local compile is not proven | `VERSION.md` |
+| 10 | Installed Godot version | `D:/Godot_v4.7.2-stable_mono_win64` reports 4.7.2 stable mono; export behavior still needs verification | local probe, `VERSION.md` |
 
 ---
 

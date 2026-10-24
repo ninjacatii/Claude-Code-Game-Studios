@@ -30,7 +30,7 @@ Table Rendering & Layout 把 Card & Deck Model 的牌堆状态画成可见的牌
 **2. 逻辑画布与缩放**
 
 - 基准逻辑画布：1280×720。
-- 均匀缩放：`scale = min(window_w / 1280, window_h / 720)`；最小 0.8（窗口最小 1024×576）。窗口最小尺寸在启动时设置；`window_w/h` 使用视口可见矩形尺寸（Godot `get_viewport().get_visible_rect().size`），不使用屏幕像素。
+- 均匀缩放：`scale = max(0.8, min(window_w / 1280, window_h / 720))`；最小 0.8（窗口最小 1024×576）。窗口最小尺寸在启动时设置；`window_w/h` 使用 `GetWindow().Size`（ADR-0004 权威源），`get_viewport().get_visible_rect().size` 仅作交叉校验；`ContentScaleMode` 必须为 `Disabled`、`ContentScaleFactor` 必须为 1.0。
 - 水平/垂直偏移：`offset_x = (window_w − 1280 × scale) / 2`，`offset_y = (window_h − 720 × scale) / 2`；letterbox 不拉伸。
 - `to_logical(window_pos) = ((x − offset_x) / scale, (y − offset_y) / scale)`；`to_window` 为其逆。
 - 禁止非均匀拉伸；卡牌比例在任何窗口尺寸下保持不变。
@@ -67,9 +67,9 @@ Table Rendering & Layout 把 Card & Deck Model 的牌堆状态画成可见的牌
 
 **6. 窗口缩放**
 
-- 窗口尺寸变化：重算 `scale`、`offset`、全部矩形；保持均匀缩放与 letterbox。
+- 窗口尺寸变化：`Window.SizeChanged` → `TableLayout.UpdateViewport(Window.Size)`，重算 `scale`、`offset`、全部矩形；TableView 更新 Node2D transform；保持均匀缩放与 letterbox。一次 resize 只重排一次。
 - 最小窗口 1024×576（scale 0.8）；更小时由窗口管理器限制；若平台允许更小，按 0.8 缩放并裁剪，记录警告。
-- 拖拽期间缩放：Drag & Drop 负责重新缩放 `grab_offset`；Table Rendering 更新矩形，二者使用同一逻辑坐标。
+- 拖拽期间缩放：Table Rendering 更新矩形后，DragInputAdapter 把当前指针经 `to_logical` 转换，调用 `IDragDropController.NotifyLayoutChanged(logicalPointer)`；Drag 用新的 `CardRect` 重算 `grab_offset`，保持牌在指针下。指针在画布外时保留外推逻辑坐标，释放仍判非法。
 
 **7. 状态与覆盖层**
 
@@ -205,7 +205,7 @@ The scale formula is defined as:
 
 | Variable | Type | Range | Source | Description |
 |----------|------|-------|--------|-------------|
-| window_w / window_h | float | ≥1 | 视口可见矩形尺寸（`get_viewport().get_visible_rect().size`） | 客户端逻辑像素 |
+| window_w / window_h | float | ≥1 | `GetWindow().Size`（ADR-0004 权威源；`get_visible_rect()` 仅交叉校验） | 窗口像素 |
 | scale | float | 0.8–无界 | 本公式 | 均匀缩放 |
 
 **Output Range:** 0.8–无界；1920×1080 → 1.5，2560×1440 → 2.0，3840×2160 → 3.0。最小 0.8；更小的窗口由最小窗口尺寸限制，若平台允许则裁剪并记录警告。
@@ -361,11 +361,11 @@ The coordinate_transform formula is defined as:
 
 | 档位 | 单 tile | 图集 | 说明 |
 |------|---------|------|------|
-| 1x | 140×190 | 2048×1024 | scale ≤1.0 |
-| 2x | 280×380 | 4096×2048 | 1.0 < scale ≤2.0 |
-| 3x | 420×570 | 4096×4096（9×6） | scale >2.0 |
+| 1x | 140×190 | 2048×1024 | atlas_scale ≤1.0 |
+| 2x | 280×380 | 4096×2048 | 1.0 < atlas_scale ≤2.0 |
+| 3x | 420×570 | 4096×4096（9×6） | atlas_scale >2.0 |
 
-- 矢量母版（SVG/PDF）保存；按 `scale × DisplayServer.screen_get_scale()` 选档，避免 4K + 200% OS 缩放时选错档导致模糊。
+- 矢量母版（SVG/PDF）保存；按 `atlas_scale = table_scale × device_factor` 选档。`device_factor` 由 ADR-0004 的启动 DPI 探针确定：Windows 上 `DisplayServer.ScreenGetScale()` 恒为 1.0，不能使用；若探针无法证明 `Window.Size` 与物理像素的关系，`device_factor = 1.0`（`atlas_scale = table_scale`），TR-007 标 `NOT ASSESSED`。
 - 开启 mipmap、Linear Mipmap 过滤、Fix Alpha Border；每个 tile 外扩 4 texel（3x）/2（2x）/1（1x），并限制 mip 链不跨 tile。
 - 不裁剪、不旋转打包（旋转会让等级侧躺）。
 - 超过 4K 时允许放大；矢量母版可再导出 4x，不需重画。
@@ -444,7 +444,7 @@ The coordinate_transform formula is defined as:
 - **GIVEN** 列高 K=10/11/12/13，**WHEN** 计算 `cascade_height`，**THEN** 返回 30/27/24/22，最后一牌底部 `256+(K−1)×cascade+190 ≤716`（K=13 → 710）；**WHEN** 逐张命中 13 张列，**THEN** 每张返回自己的索引，全部可点击。
 - **GIVEN** 1920×1080，**WHEN** 计算 scale/offset，**THEN** scale=1.5、offset=(0,0)；**GIVEN** 1024×576，**THEN** scale=0.8、offset=(0,0)；卡牌比例始终 140:190，无非均匀拉伸。
 - **GIVEN** 800×600（低于最小窗口），**WHEN** 计算，**THEN** scale 钳制 0.8、offset=(−112,12)、画布居中裁剪并记录警告；**GIVEN** 点击 letterbox（1600×1000、scale 1.25、offset (0,50)，窗口点 (800,10) → 逻辑 (640,−32)），**WHEN** `hit_test`，**THEN** 返回 null。
-- **GIVEN** HiDPI/系统缩放，**WHEN** 读取 `window_w/h`，**THEN** 使用 `get_viewport().get_visible_rect().size`，不使用屏幕像素，绘制与命中测试保持对齐。
+- **GIVEN** HiDPI/系统缩放，**WHEN** 读取 `window_w/h`，**THEN** 使用 `GetWindow().Size`（ADR-0004 权威源），`get_viewport().get_visible_rect().size` 仅交叉校验；`ContentScaleMode=Disabled`、`ContentScaleFactor=1.0`；绘制与命中测试保持对齐。
 - **GIVEN** 任意逻辑点 p 与 scale/offset，**WHEN** 执行 `to_window(to_logical(p))`，**THEN** 结果与 p 相差 ≤1 ulp；例：scale 1.25、offset (0,50)，`to_logical((800,500))=(640,360)`、`to_window((640,360))=(800,500)`。
 
 ### 命中、层级与状态
@@ -458,7 +458,7 @@ The coordinate_transform formula is defined as:
 ### 视觉、资源与性能
 
 - **GIVEN** 任意渲染帧，**WHEN** 检查，**THEN** 桌面为纯 `#008000`（无渐变/纹理/暗角）；卡面只用 `#FFFFFF`/`#000000`/`#FF0000`（边缘 1px 内允许抗锯齿混色）；1px 黑边框与 8px 圆角烘焙在图集里；渲染路径无 `draw_line` 或未填充 `draw_rect`；letterbox 为 `#000000`；无阴影/高光/tint；无卡背。
-- **GIVEN** 窗口 scale 与 OS display scale，**WHEN** 选择图集，**THEN** 1x ≤1.0、2x 1.0–2.0、3x >2.0，按 `scale × DisplayServer.screen_get_scale()` 选档并开启 mipmap；3840×2160 用 3x 时等级笔画 1:1 无灰晕；1024×576 时等级字高 ≥20 设备像素、红/黑可辨。
+- **GIVEN** 窗口 scale 与 OS display scale，**WHEN** 选择图集，**THEN** `atlas_scale = table_scale × device_factor`，按半开区间 `≤1.0 → 1x`、`(1.0,2.0] → 2x`、`>2.0 → 3x` 选档并开启 mipmap；Windows 上不得使用 `DisplayServer.screen_get_scale()`；device_factor 探针无法证明物理像素关系时 `atlas_scale = table_scale` 且 TR-007 标 `NOT ASSESSED`；3840×2160 用 3x 时等级笔画 1:1 无灰晕；1024×576 时等级字高 ≥20 设备像素、红/黑可辨。
 - **GIVEN** 无输入且模型不变，**WHEN** 相隔 1 秒截两张图，**THEN** 逐像素相同（无待机动画、无逐帧重绘）；只在模型/拖拽/缩放/状态变化时重绘；拖拽只更新拖拽层位置；缩放只重排一次；绘制调用与每帧分配维持 60fps 目标。
 - **GIVEN** 相同状态与输入，**WHEN** 重复计算几何与命中，**THEN** 结果完全一致（确定性纯几何）；绘制与命中共享同一逻辑浮点矩形与 scale/offset；Drag & Drop 集成测试锁定 0-based 自底向顶的 `card_index` 契约。
 - **GIVEN** 空列，**WHEN** 调用 `card_rect(pile, -1)`，**THEN** 返回所在列首槽矩形；实现不得让 -1 参与 `tableau_y` 的算术。
@@ -472,5 +472,6 @@ The coordinate_transform formula is defined as:
 | 卡面素材授权（公有领域 English-pattern 牌组） | art-director + producer | 资产阶段 |
 | 空槽轮廓颜色（白 55% vs #C0C0C0） | art-director | 参考截图确认 |
 | 高对比/色盲模式 | Readability & Accessibility | 该 GDD 编写时 |
-| 窗口最小尺寸的平台行为 | technical-director | 架构阶段 |
+| 窗口最小尺寸的平台行为 | technical-director | ADR-0004 已定 1024×576；`Window.MinSize` 被平台绕过时按 clamp+crop 兜底 |
+| Windows DPI 探针（`ScreenGetDpi/96` 与 `Window.Size` 物理/逻辑关系） | technical-director + godot-specialist | Table View 实现前实测；无法确定时 TR-007 标 `NOT ASSESSED` |
 | 卡面字体最终选择 | art-director | 资产阶段 |

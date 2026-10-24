@@ -29,7 +29,7 @@ Toolbar & Menus 是牌桌之外的唯一命令入口：它把新局、选局、�
 
 **2. UI 表面**
 
-- **菜单栏**：高 28 窗口坐标 px（视口单位），水平铺满窗口宽度，锚定窗口顶部；不随牌桌 letterbox 缩放。它落在 Table Rendering 顶部 38px 边距内：0.8 牌桌缩放下边距为 30.4 窗口坐标 px，菜单栏仍不覆盖顶排卡牌（见 Formulas 的 `menu_bar_fits`）。
+- **菜单栏**：目标高 28 窗口坐标 px（视口单位），水平铺满窗口宽度，锚定窗口顶部；不随牌桌 letterbox 缩放。实际高度以 `MenuBar.Size.Y` 实测值为准（主题最小尺寸不得使其超过 28）；它放在 identity `CanvasLayer` 中，`FollowViewportEnabled=false`。它落在 Table Rendering 顶部 38px 边距内：0.8 牌桌缩放下边距为 30.4 窗口坐标 px，菜单栏仍不覆盖顶排卡牌（见 Formulas 的 `menu_bar_fits`）。
 - **无工具栏、无状态栏**；不使用牌桌以外的常驻元素。局号显示在窗口标题，临时消息使用横幅。
 - **窗口标题**：有牌局时 `空当接龙 — 局号 #N`；`NoGame` 时 `空当接龙`。N 为不带千分位的十进制数字（如 `#1000000`）。在 `GameStarted` / `GameRestarted` / `GameLoaded` / `StateChanged` 后更新。
 - **层级**：牌桌 < Hint 高亮 < 拖拽层 < 菜单栏/横幅 < 对话框/菜单弹层。菜单栏与横幅在拖拽层之上；对话框在最上层。
@@ -168,16 +168,16 @@ Toolbar 没有牌局状态；只有 UI 呈现状态。
 4. Statistics 的 `get_stats()` / `reset_stats()` 如 Statistics GDD；`StatsSnapshot.win_rate` 是唯一胜率来源。
 5. Drag & Drop 提供 `DragStarted` / `DragDropped` / `DragCancelled` 事件；否则 Toolbar 无法可靠禁用提示/清除高亮。
 6. 菜单栏使用窗口坐标、28 窗口坐标 px；在 0.8 牌桌缩放下不覆盖顶排（见 Formulas）。
-7. `project.godot` 的 stretch 模式未钉死；UI 坐标策略需 ADR 固定。
+7. ADR-0004 固定 `stretch/mode="disabled"`、`Window.Size` 权威源与 identity CanvasLayer；实现首个故事必须写入 `[display]` 并断言 `ContentScaleMode=Disabled`、`ContentScaleFactor=1.0`。
 8. 玩家可见字符串来自字符串表，默认中文；不硬编码。
 9. MVP 无 Save/Resume UI；读档对话框留给 VS。
 10. 模态对话框的透明输入阻挡层不改变牌桌绘制；不做背景变暗。
 
 ## Formulas
 
-> **坐标单位（先读）。** 本节所有 `menu_bar_*` 公式与 `top_y × table_scale`、`offset_y` 使用**同一单位**：Table Rendering `scale` 公式中 `window_w` / `window_h` 的单位（`get_viewport().get_visible_rect().size`，OS 无关的窗口坐标 px）。菜单栏必须是根视口内的 Control，不得放在额外缩放的 `CanvasLayer` / `SubViewport` 中。OS 显示缩放 125/150/200% 在三者中约掉，0.8 下的 2.4 px 间隙不变。若 `project.godot` 的 stretch 模式未钉死（当前没有 `[display]` 段），`table_scale` 可能不是 0.8；这是阻断性架构前提，见 Dependencies / Open Questions。
+> **坐标单位（先读）。** 本节所有 `menu_bar_*` 公式与 `top_y × table_scale`、`offset_y` 使用**同一单位**：`GetWindow().Size` 的窗口像素（ADR-0004 权威源；`get_viewport().get_visible_rect()` 仅交叉校验）。`ContentScaleMode` 必须为 `Disabled`、`ContentScaleFactor` 必须为 1.0；否则窗口像素不等于输入坐标，公式不成立。菜单栏必须是 identity `CanvasLayer` 内的 Control，`FollowViewportEnabled=false`，不得放在额外缩放的 `CanvasLayer` / `SubViewport` / Node2D 中。OS 显示缩放 125/150/200% 不应改变窗口像素尺寸；若实测改变，记录 `Window.Size`、`ScreenGetDpi` 与 PNG 像素后再判定。
 
-**常量：** `MENU_BAR_HEIGHT = 28`（本 GDD，窗口坐标 px）；`top_y = 38`、`min_scale = 0.8`、`base_canvas_width = 1280`、`base_canvas_height = 720`（Table Rendering / registry）；`deal_number_min = 1`、`deal_number_max = 1,000,000`（registry）。最小窗口 = `(1280 × 0.8, 720 × 0.8) = (1024, 576)`，此时 `offset_y = 0`。
+**常量：** `MENU_BAR_HEIGHT_TARGET = 28`（本 GDD，窗口坐标 px；实际公式输入使用 `MenuBar.Size.Y` 实测值）；`top_y = 38`、`min_scale = 0.8`、`base_canvas_width = 1280`、`base_canvas_height = 720`（Table Rendering / registry）；`deal_number_min = 1`、`deal_number_max = 1,000,000`（registry）。最小窗口 = `(1280 × 0.8, 720 × 0.8) = (1024, 576)`，此时 `offset_y = 0`。
 
 ### The menu_bar_fits formula
 
@@ -189,7 +189,7 @@ The menu_bar_fits formula is defined as:
 
 | Variable | Type | Range | Source | Description |
 |----------|------|-------|--------|-------------|
-| menu_bar_height | int（窗口坐标 px） | 28（常量） | 本 GDD | 菜单栏总占用高度，含底部分隔线/边框 |
+| menu_bar_height | int（窗口坐标 px） | 实测 `MenuBar.Size.Y`，目标 28 | 本 GDD / 运行时 | 菜单栏总占用高度，含底部分隔线/边框；主题最小尺寸不得使其超过 28 |
 | top_y | int（逻辑画布 px） | 38 | Table Rendering `top_y`（registry） | 顶排卡牌上边缘的逻辑 y |
 | table_scale | float | 0.8–无界 | Table Rendering `scale` 公式 | 逻辑画布 → 窗口坐标的均匀缩放 |
 | menu_bar_fits | int | {0,1} | 本公式 | 1 = 菜单栏不覆盖顶排卡牌 |
@@ -210,7 +210,7 @@ The menu_bar_clearance formula is defined as:
 
 | Variable | Type | Range | Source | Description |
 |----------|------|-------|--------|-------------|
-| menu_bar_height | int（窗口坐标 px） | 28 | 本 GDD | 菜单栏总高度 |
+| menu_bar_height | int（窗口坐标 px） | 实测 `MenuBar.Size.Y`，目标 28 | 本 GDD / 运行时 | 菜单栏总高度 |
 | top_y | int（逻辑画布 px） | 38 | Table Rendering | 顶排卡牌上边缘 |
 | table_scale | float | 0.8–无界 | Table Rendering | 均匀缩放 |
 | offset_y | float（窗口坐标 px） | 受支持窗口 ≥ 0；裁剪时 < 0 | Table Rendering `letterbox_offset` | 画布上边缘到窗口上边缘 |
@@ -316,10 +316,10 @@ The command_enabled formula is defined as:
 - **If 16:9 大窗口（1920×1080，scale 1.5）**：`offset_y = 0`，间隙 29；不覆盖。
 - **If 高于 16:9 的窗口（1600×1000，scale 1.25，offset_y = 50）**：菜单栏整条落在黑色 letterbox 上，到卡牌间隙 69.5；菜单栏必须自带不透明背景，不能假设背后是绿色桌面。
 - **If 有效视口小于 1024×576（如 1920×1080 @200% OS 缩放）**：`offset_y < 0`，顶排可能压到菜单栏下或被裁掉；记录 warning，保持菜单栏位置不变，沿用 Table Rendering 的裁剪规则；不得运行期移动菜单栏。
-- **If OS 显示缩放为 125/150/200%**：菜单栏、`top_y × table_scale`、`offset_y` 使用同一视口单位时，0.8 下的间隙仍为 2.4；若实测菜单栏高度 ≠ 28，用实测值重算，间隙 < 0 时记录 error。
+- **If OS 显示缩放为 125/150/200%**：`Window.Size`、`top_y × table_scale`、`offset_y` 使用同一窗口像素单位时，0.8 下的间隙仍为 2.4；每档记录 `Window.Size`、`ScreenGetDpi`、`ScreenGetScale` 与 PNG 实际像素；若窗口像素未变化或无法设置缩放，标 `NOT ASSESSED`；若实测菜单栏高度 ≠ 28，用实测值重算，间隙 < 0 时记录 error。
 - **If 系统字号/主题把菜单栏撑高于 28**：固定高度容器 + `custom_minimum_size.y = 28` + 固定主题字号；超出部分裁剪，或把实测高度作为 `menu_bar_height`；**不得静默重叠**。
 - **If `top_y` 或 `min_scale` 被调参（如 top_y 34、min_scale 0.75）**：`menu_bar_fits` 可能为 0；由 CI 参数化测试捕获；运行期不改变布局，只记录 error。
-- **If `project.godot` 的 stretch 模式未钉死**：`table_scale` 可能不是 0.8（4.7 新项目默认 `canvas_items` / `expand`）；此时 30.4 不成立，菜单栏适配公式进入 `NOT ASSESSED`，必须先按 ADR 固定 stretch/坐标策略。
+- **If `ContentScaleMode` 不是 `Disabled` 或 `ContentScaleFactor` 不是 1.0**：窗口像素与输入坐标不再一致，`table_scale` 的 0.8 假设不成立；菜单栏适配公式进入 `NOT ASSESSED`，按 ADR-0004 先修正 display/ContentScale 设置。
 
 **局号输入**
 
@@ -404,7 +404,7 @@ The command_enabled formula is defined as:
 - **系统索引：** 已在 2026-10-24 将 Toolbar 行依赖补为 `4, 5, 6, 7, 8, 10`（Table Rendering 为 Hard，Drag & Drop 为 Soft 事件）。
 - **Table Rendering 接口：** `set_hint_highlight` / `clear_hint` 已于 2026-10-24 补进 Table Rendering GDD 的 Interactions/接口表与 Cross-References。
 - Drag & Drop GDD 的 Interactions 表未列 Toolbar；本 GDD 只依赖其 `DragStarted` / `DragDropped` / `DragCancelled` 事件。若 Drag 不提供这两个事件，需在 Drag GDD 补齐或改为 Toolbar 轮询拖拽状态（不推荐）。
-- `project.godot` 无 `[display]` 段；stretch 模式未钉死。Table Rendering 的 `scale` 公式与 `menu_bar_fits` 依赖它，必须先由 ADR 固定（见 Open Questions）。
+- `project.godot` 当前无 `[display]` 段；ADR-0004 已固定 `stretch/mode="disabled"`、`Window.Size` 权威源与 identity CanvasLayer。首个实现故事必须写入这些键并做启动断言；在此之前几何 AC 标 `NOT ASSESSED`。
 
 **Provisional assumptions（依赖未显式提供，先假定）：**
 
@@ -414,7 +414,7 @@ The command_enabled formula is defined as:
 4. Statistics 的 `get_stats()` / `reset_stats()` 如 Statistics GDD；`StatsSnapshot` 计数器满足不变量。
 5. Drag & Drop 提供 `DragStarted` / `DragDropped` / `DragCancelled` 事件。
 6. 菜单栏与 Table Rendering 的 `top_y` / `table_scale` / `offset_y` 使用同一视口单位；OS 显示缩放在比较中约掉。
-7. `project.godot` 的 stretch 模式在实现前由 ADR 固定（推荐 `stretch/mode = "disabled"` 或 Table 改读 `DisplayServer.window_get_size()`）；在此之前 `menu_bar_fits` 标 `NOT ASSESSED`。
+7. ADR-0004 已固定 `stretch/mode="disabled"`、`Window.Size` 权威源与 identity CanvasLayer；实现前必须把 `[display]` 写入 `project.godot`，否则 `menu_bar_fits` 标 `NOT ASSESSED`。
 8. 玩家可见字符串来自字符串表，默认中文；不硬编码。
 9. MVP 无 Save/Resume UI；读档对话框留给 VS。
 10. 模态对话框使用透明全窗口输入阻挡层，不做背景变暗；菜单栏高度固定 28，主题字号不改变它。
@@ -473,7 +473,7 @@ The command_enabled formula is defined as:
 | `design/gdd/game-concept.md` | Pillars / Anti-Pillars / Visual Identity | 菜单栏 + 快捷键的原版 UI；无工具栏/状态栏/教程/成就；1280×720、0.8 最小缩放 |
 | `design/gdd/systems-index.md` | Toolbar 行 / Dependency Map / Progress | 依赖已补 5（Drag & Drop）与 10（Table Rendering）；MVP 10/10 |
 | `design/registry/entities.yaml` | formulas / constants | `top_y`、`min_scale`、`deal_number_min/max`、`win_rate` 的 `referenced_by`；可选 `menu_bar_height=28` |
-| `project.godot` | `[display]`（缺失） | stretch 模式未钉死；`menu_bar_fits` / 几何 AC 在 ADR 前 `NOT ASSESSED` |
+| `project.godot` | `[display]`（待写入） | ADR-0004 固定 `stretch=disabled` / `Window.Size` / identity CanvasLayer；首个故事写入并断言，此前几何 AC 标 `NOT ASSESSED` |
 
 **已知跨文档事项：**
 
@@ -530,11 +530,11 @@ The command_enabled formula is defined as:
 
 ### Geometry（截图证据）
 
-- **AC-G01（1024×576）** GIVEN 最小窗口，THEN `scale=0.8`、`offset=(0,0)`、菜单下缘 28、顶排上缘 30.4、间隙 2.4、不重叠；截图 `production/qa/evidence/toolbar/1024x576.png`。
-- **AC-G02（1920×1080）** GIVEN 16:9 大窗口，THEN `scale=1.5`、`offset=(0,0)`、顶排上缘 57、间隙 29；菜单高仍 28 而非 42；截图。
+- **AC-G01（1024×576）** GIVEN 最小窗口，THEN `Window.Size=(1024,576)`、`scale=0.8`、`offset=(0,0)`、实测菜单高 28、顶排上缘 30.4、间隙 2.4、不重叠；截图 `production/qa/evidence/toolbar/1024x576.png`。
+- **AC-G02（1920×1080）** GIVEN 16:9 大窗口，THEN `Window.Size=(1920,1080)`、`scale=1.5`、`offset=(0,0)`、顶排上缘 57、间隙 29；菜单高仍 28 而非 42；截图。
 - **AC-G03（1600×1000）** GIVEN 高于 16:9，THEN `scale=1.25`、`offset=(0,50)`、菜单整条落在黑色 letterbox（0–28 在 0–50 内）、间隙 69.5、菜单不透明；截图。
 - **AC-G04（裁剪视口 960×540）** GIVEN 如 1920×1080@200%，THEN `scale` 钳 0.8、`offset_y=−18`、间隙 −15.6；记录 warning；菜单保持 y=0 高 28，不运行期移动/压缩；牌桌按 Table 裁剪；截图。
-- **AC-G05（OS 缩放 125/150/200%）** GIVEN 视口 1024×576，THEN 菜单高仍 28、间隙 2.4；实测 ≠28 则按实测重算，间隙 <0 记 error，不得静默重叠；每档截图；环境无法设置则 `NOT ASSESSED`。
+- **AC-G05（OS 缩放 125/150/200%）** GIVEN `Window.Size=(1024,576)`，THEN `ContentScaleMode=Disabled`、`ContentScaleFactor=1.0`、实测菜单高仍 28、间隙 2.4；每档同时记录 `Window.Size`、`ScreenGetDpi`、`ScreenGetScale` 与 PNG 实际像素；实测 ≠28 则按实测重算，间隙 <0 记 error，不得静默重叠；环境无法设置或窗口像素未变化则 `NOT ASSESSED`。
 
 ### Cross-system
 
@@ -559,7 +559,7 @@ The command_enabled formula is defined as:
 ### 不在本 GDD 验证范围（NOT ASSESSED）
 
 - 原版快捷键保真度（F2/F3/F4/Ctrl+Z/F10 为暂定值，无参考机截图）。
-- `project.godot` 无 `[display]` 段、stretch 未钉死；`table_scale` 可能不是 0.8，G01–G05 与 `menu_bar_fits` 实测换算在 ADR 前 `NOT ASSESSED`。
+- `project.godot` 尚未写入 `[display]`；ADR-0004 已固定坐标模型，但 G01–G05 与 `menu_bar_fits` 的实测换算在 `[display]` 写入并断言 `ContentScaleFactor=1.0` 前标 `NOT ASSESSED`。
 - 原版视觉保真度（art bible 不存在；本 GDD 只验收结构/尺寸/不透明/层级，不验收具体像素风格）。
 - 高对比/色盲 Full Vision（Accessibility GDD 未写；MVP 仅保证键盘可达）。
 - Save/Resume UI（MVP 无；`GameLoaded` 只能用注入事件验证）。
@@ -571,10 +571,10 @@ The command_enabled formula is defined as:
 | # | 问题 | 负责人 | 目标 |
 |---|------|--------|------|
 | 1 | 混合参考（Windows 7/XP 功能基线）快捷键是否为 F2/F3/F4/Ctrl+Z/F10？统计是否有快捷键？ | 用户 / UX | 参考机截图后 |
-| 2 | `project.godot` 无 `[display]` 段；stretch 模式未钉死，Table 的 `scale` 可能不是 0.8。需 ADR 固定 UI 坐标策略后，`menu_bar_fits` 与几何 AC 才能判定。 | technical-director / godot-specialist | 实现前（ADR） |
+| 2 | （ADR-0004 已解决）`stretch/mode="disabled"`、`Window.Size` 权威源、identity CanvasLayer 已固定；首个实现故事写入 `[display]` 并断言 `ContentScaleMode=Disabled` / `ContentScaleFactor=1.0`，之后 `menu_bar_fits` 与几何 AC 才可判定。 | technical-director / godot-specialist | 实现前（写入 `[display]`） |
 | 3 | （已解决 2026-10-24）系统索引 Toolbar 行已补 Drag & Drop（5）与 Table Rendering（10）。 | systems-index / producer | 已完成 |
 | 4 | （已解决 2026-10-24）Table Rendering GDD 已补 `set_hint_highlight` / `clear_hint`。 | Table Rendering GDD | 已完成 |
-| 5 | 菜单栏高度由主题/系统字号撑高时，固定 28 + 裁剪，还是用实测高度重算？当前：固定 28，实测 ≠28 时记录 error。 | UX / technical-artist | 实现前 |
+| 5 | 菜单栏高度由主题/系统字号撑高时，固定 28 + 裁剪，还是用实测高度重算？ADR-0004：目标 28，公式使用实测 `MenuBar.Size.Y`；主题最小高度必须 ≤28，否则几何 AC 失败，不静默裁剪。 | UX / technical-artist | 实现前 |
 | 6 | 退出时若牌局进行中，是否要确认？当前：不确认、立即退出（MVP 无存档）。 | 用户 / UX | MVP 验收 |
 | 7 | 「新局」在 `Playing/Won/Stuck` 用 `next_deal()`（N+1）；混合参考（Windows 7/XP 功能基线）是否如此，还是随机/当前 N？ | 用户 | 参考机截图后 |
 | 8 | Won 对话框「新局」打开选局对话框还是直接下一局？当前：打开选局；「下一局」直接 `next_deal()`。 | UX | MVP UI |

@@ -109,7 +109,7 @@ Drag & Drop Interaction 把鼠标按下、移动与释放翻译成空当接龙�
 **9. 事件与协调**
 
 - `DragStarted`、`DragMoved`、`DragDropped`、`DragCancelled`、`MoveExecuted`、`MoveRejected`。
-- Animation & Feedback 消费落位/回弹；Audio & SFX 消费拾取/放下/拒绝；State 消费 `MoveExecuted`。Undo 通过 `record_before_move` / `commit` / `discard_pending` 记录，不依赖移动后事件。
+- Animation & Feedback 消费落位/回弹；Audio & SFX 消费拾取/放下/拒绝；`MoveExecuted` 是移动成功后的通知，供 Animation/Audio 消费，**不触发 State**。State 由合法路径中的 `on_move_applied(result)` 直接调用。Undo 通过 `record_before_move` / `commit` / `discard_pending` 记录，不依赖移动后事件。
 - Drag & Drop 不写统计；胜利统计由 State 处理。
 
 **10. 性能与手感**
@@ -137,7 +137,7 @@ Drag & Drop Interaction 把鼠标按下、移动与释放翻译成空当接龙�
 
 | 系统 | 方向 | 流入 | 流出 | 接口所有权 |
 |------|------|------|------|------------|
-| Table Rendering & Layout | 上游 | 命中测试、卡牌矩形、拖拽层层级 | 隐藏源牌/显示拖拽层 | Rendering 拥有布局 |
+| Table Rendering & Layout | 上游（几何）/ 下游（事件） | 命中测试、卡牌矩形 | `DragStarted` / `DragMoved` / `DragDropped` / `DragCancelled` | Rendering 拥有布局；TableView 消费事件 |
 | Card & Deck Model | 上游 | `move` | 移动结果 | Model 拥有牌堆 |
 | Rules & Move Validator | 上游 | `valid_sequence` / `can_move` / `auto_move_destination` | 合法/非法 | Rules 拥有规则 |
 | Game State Machine | 接口 | `can_accept_moves` / `on_move_applied` | 移动通知 | State 拥有生命周期 |
@@ -158,7 +158,7 @@ Drag & Drop Interaction 把鼠标按下、移动与释放翻译成空当接龙�
   - `hit_test(logical_pos) -> HitResult | null`
   - `HitResult = { pile, card_index }`：`card_index` 为 0-based 自底向顶；空堆返回 `-1`（不可拖拽）。
   - `card_rect(pile, index) -> Rect`
-  - `set_drag_layer(unit, visible)` / `set_source_hidden(pile, count, hidden)`
+  - TableView 订阅 `DragStarted` / `DragMoved` / `DragDropped` / `DragCancelled`；拖拽层与源牌隐藏由 TableView 绘制，Drag 不直接调用视图。
 - Drag & Drop 不修改模型、不判断规则、不写文件。
 
 ## Formulas
@@ -315,7 +315,7 @@ The snap_back_duration formula is defined as:
 
 **上游依赖**：
 
-- **Table Rendering & Layout**（Hard，GDD 已完成）：`hit_test(logical_pos)`、`card_rect(pile, index)`（0-based 自底向顶）、`set_drag_layer` / `set_source_hidden`、拖拽层层级。
+- **Table Rendering & Layout**（Hard，GDD 已完成）：`hit_test(logical_pos)`、`card_rect(pile, index)`（0-based 自底向顶）、拖拽层层级；Drag 发出 `DragStarted` / `DragMoved` / `DragDropped` / `DragCancelled`，由 TableView 消费。
 - **Card & Deck Model**（Hard）：`move`；只读查询。
 - **Rules & Move Validator**（Hard）：`valid_sequence`、`can_move`、`auto_move_destination`。
 - **Game State Machine**（接口）：`can_accept_moves`、`on_move_applied`。
@@ -342,7 +342,7 @@ The snap_back_duration formula is defined as:
   - `hit_test(logical_pos) -> HitResult | null`
   - `HitResult = { pile, card_index }`：`card_index` 为 0-based 自底向顶；空堆返回 `-1`（不可拖拽）。
   - `card_rect(pile, index) -> Rect`（0-based 自底向顶）
-  - `set_drag_layer(unit, visible)` / `set_source_hidden(pile, count, hidden)`
+  - TableView 订阅 `DragStarted` / `DragMoved` / `DragDropped` / `DragCancelled`；拖拽层与源牌隐藏由 TableView 绘制，Drag 不直接调用视图。
 - Drag & Drop 不修改模型、不判断规则、不写文件；只在 Rules 批准后调用模型。
 
 **Provisional assumptions（下游未设计，先假定）**：

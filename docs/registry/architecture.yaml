@@ -53,7 +53,18 @@ last_updated: ""
 # interface: how other systems access this state (read-only property, method call,
 #   signal, shared resource, etc.) — this is the contract other ADRs depend on.
 
-state_ownership: []
+state_ownership:
+  - state: card_pile_state
+    status: active
+    owner_system: card-deck-model
+    adr: docs/architecture/adr-0001-layered-boundaries-and-pure-csharp-core.md
+    interface: "ICardDeckModel read-only queries; writes only via Move after Rules approval, Deal, Restore, Deserialize"
+    write_access: card-deck-model-only
+    referenced_by:
+      - docs/architecture/adr-0001-layered-boundaries-and-pure-csharp-core.md
+      - docs/architecture/architecture.md
+    added: 2026-10-24
+    revised: ""
 
 # Example:
 #
@@ -81,7 +92,54 @@ state_ownership: []
 #
 # pattern options: signal | direct_call | event_bus | shared_resource | rpc | none
 
-interfaces: []
+interfaces:
+  - contract: state_lifecycle_events
+    status: active
+    pattern: signal
+    producer: game-state-machine
+    consumers:
+      - statistics-records
+      - toolbar-menus
+      - table-rendering-layout
+      - drag-drop-interaction
+    adr: docs/architecture/adr-0002-session-composition-model-ownership-and-event-contract.md
+    signal_signature: "GameStarted/GameRestarted/GameWon/GameStuck/GameLoaded/StateChanged (typed C# Action<T> events; synchronous)"
+    referenced_by:
+      - docs/architecture/adr-0002-session-composition-model-ownership-and-event-contract.md
+      - docs/architecture/architecture.md
+    added: 2026-10-24
+    revised: ""
+
+  - contract: undo_completion
+    status: active
+    pattern: signal
+    producer: undo-history
+    consumers:
+      - game-state-machine
+      - toolbar-menus
+      - table-rendering-layout
+    adr: docs/architecture/adr-0002-session-composition-model-ownership-and-event-contract.md
+    signal_signature: "UndoPerformed(UndoPerformed) / UndoFailed(UndoFailed) (typed C# events)"
+    referenced_by:
+      - docs/architecture/adr-0002-session-composition-model-ownership-and-event-contract.md
+      - docs/architecture/architecture.md
+    added: 2026-10-24
+    revised: ""
+
+  - contract: drag_visual_updates
+    status: active
+    pattern: signal
+    producer: drag-drop-interaction
+    consumers:
+      - table-rendering-layout
+      - toolbar-menus
+    adr: docs/architecture/adr-0002-session-composition-model-ownership-and-event-contract.md
+    signal_signature: "DragStarted/DragMoved/DragDropped/DragCancelled (typed C# events)"
+    referenced_by:
+      - docs/architecture/adr-0002-session-composition-model-ownership-and-event-contract.md
+      - docs/architecture/architecture.md
+    added: 2026-10-24
+    revised: ""
 
 # Example:
 #
@@ -141,7 +199,90 @@ performance_budgets: []
 # Register an API decision when the choice is non-obvious and other ADRs might
 # make a different choice for the same purpose without knowing this was decided.
 
-api_decisions: []
+api_decisions:
+  - purpose: pure_layer_geometry_type
+    status: active
+    api: "System.Numerics.Vector2 + project LogicalRect"
+    not: "Godot.Vector2 / Godot.Rect2 in Foundation/Core/Feature"
+    adr: docs/architecture/adr-0001-layered-boundaries-and-pure-csharp-core.md
+    reason: "Keeps pure layers engine-free and unit-testable; conversion happens at the Presentation boundary."
+    referenced_by:
+      - docs/architecture/adr-0001-layered-boundaries-and-pure-csharp-core.md
+      - docs/architecture/architecture.md
+    added: 2026-10-24
+    revised: ""
+
+  - purpose: godot_csharp_project_layout
+    status: active
+    api: "single root FreeCell.csproj with src/ layer folders and namespaces"
+    not: "multiple assemblies per layer (for MVP)"
+    adr: docs/architecture/adr-0001-layered-boundaries-and-pure-csharp-core.md
+    reason: "Shortest Godot build/export path for a solo MVP; purity is enforced by a static architecture check. The two-project Core library remains the documented fallback."
+    referenced_by:
+      - docs/architecture/adr-0001-layered-boundaries-and-pure-csharp-core.md
+      - docs/architecture/architecture.md
+    added: 2026-10-24
+    revised: ""
+
+  - purpose: session_composition
+    status: active
+    api: "GameBootstrap constructs concrete services; GameSession is a pure C# container that holds and wires them"
+    not: "GameSession constructs services or becomes a second composition root"
+    adr: docs/architecture/adr-0002-session-composition-model-ownership-and-event-contract.md
+    reason: "Preserves GameBootstrap as the only constructor while keeping the session graph unit-testable without Godot."
+    referenced_by:
+      - docs/architecture/adr-0002-session-composition-model-ownership-and-event-contract.md
+      - docs/architecture/architecture.md
+    added: 2026-10-24
+    revised: ""
+
+  - purpose: pure_csharp_event_transport
+    status: active
+    api: "direct typed C# events (event Action<T>?) with SafeRaise and a shared CommandGate"
+    not: "global event bus, Godot [Signal] in Foundation/Core/Feature, async void handlers"
+    adr: docs/architecture/adr-0002-session-composition-model-ownership-and-event-contract.md
+    reason: "Keeps pure layers engine-free and event order/reentrancy testable without a scene tree."
+    referenced_by:
+      - docs/architecture/adr-0002-session-composition-model-ownership-and-event-contract.md
+      - docs/architecture/architecture.md
+    added: 2026-10-24
+    revised: ""
+
+  - purpose: model_snapshot
+    status: active
+    api: "immutable ModelSnapshot sealed class with private constructor + Create factory, structural sharing, ContentEquals and deterministic FNV-1a ContentHash"
+    not: "public snapshot constructor, deep copy per snapshot, HashCode.Combine/process-randomized fingerprint"
+    adr: docs/architecture/adr-0003-model-snapshot-and-serialization-schema.md
+    reason: "Gives Undo O(1) snapshots and a deterministic state fingerprint without a second representation."
+    referenced_by:
+      - docs/architecture/adr-0003-model-snapshot-and-serialization-schema.md
+      - docs/architecture/architecture.md
+    added: 2026-10-24
+    revised: ""
+
+  - purpose: snapshot_serialization
+    status: active
+    api: "explicit System.Text.Json DTOs + SchemaVersion 1 + strict card codec + UnmappedMemberHandling.Disallow"
+    not: "serializing ModelSnapshot/GameSnapshot domain types directly; Godot.Json; unknown-field acceptance"
+    adr: docs/architecture/adr-0003-model-snapshot-and-serialization-schema.md
+    reason: "Keeps the payload auditable, rejects faceUp/unknown fields, and avoids domain-type serialization."
+    referenced_by:
+      - docs/architecture/adr-0003-model-snapshot-and-serialization-schema.md
+      - docs/architecture/architecture.md
+    added: 2026-10-24
+    revised: ""
+
+  - purpose: save_payload
+    status: active
+    api: "full GameSnapshot: SchemaVersion + AlgorithmVersion + DealNumber + State + ModelSnapshot"
+    not: "deal-number-only save that regenerates the initial deal"
+    adr: docs/architecture/adr-0003-model-snapshot-and-serialization-schema.md
+    reason: "Resuming a game in progress requires the current model, not the initial deal."
+    referenced_by:
+      - docs/architecture/adr-0003-model-snapshot-and-serialization-schema.md
+      - docs/architecture/architecture.md
+    added: 2026-10-24
+    revised: ""
 
 # Example:
 #
@@ -167,7 +308,62 @@ api_decisions: []
 # Register a pattern when an ADR explicitly bans it AND other ADRs might
 # unknowingly use it (i.e., it's a tempting but wrong approach for this project).
 
-forbidden_patterns: []
+forbidden_patterns:
+  - pattern: godot_types_in_pure_layers
+    status: active
+    description: "Foundation/Core/Feature must not use 'using Godot', 'Godot.', 'global::Godot', Godot node types, or Godot value types."
+    why: "Engine types in gameplay layers make logic untestable without a scene tree and couple rules/state to rendering."
+    adr: docs/architecture/adr-0001-layered-boundaries-and-pure-csharp-core.md
+    added: 2026-10-24
+
+  - pattern: upward_layer_dependency
+    status: active
+    description: "Foundation must not depend on Core/Feature/Presentation/App; Core must not depend on Feature/Presentation/App; Feature must not depend on Presentation/App; Presentation must not depend on App."
+    why: "Upward dependencies invert the layer model, create cycles, and make pure logic depend on presentation."
+    adr: docs/architecture/adr-0001-layered-boundaries-and-pure-csharp-core.md
+    added: 2026-10-24
+
+  - pattern: autoload_singleton_for_gameplay
+    status: active
+    description: "Do not use Autoload, a static service locator, or mutable global state for gameplay services; GameBootstrap is the only constructor and GameSession is a pure container."
+    why: "Global access hides dependencies, breaks isolated tests, and makes lifecycle/order implicit."
+    adr: docs/architecture/adr-0001-layered-boundaries-and-pure-csharp-core.md
+    added: 2026-10-24
+
+  - pattern: tests_compiled_into_game_assembly
+    status: active
+    description: "Test code must not be compiled into FreeCell.dll; exclude tests/**/*.cs from the game project and use a separate test project."
+    why: "Shipping test code and test frameworks bloats the game assembly and couples the game build to test infrastructure."
+    adr: docs/architecture/adr-0001-layered-boundaries-and-pure-csharp-core.md
+    added: 2026-10-24
+
+  - pattern: presentation_binding_to_app_types
+    status: active
+    description: "Presentation Bind() signatures must not reference FreeCell.App types, including GameSession."
+    why: "Binding to an App type creates a Presentation -> App dependency, inverting the layer model and preventing Presentation from being tested independently."
+    adr: docs/architecture/adr-0002-session-composition-model-ownership-and-event-contract.md
+    added: 2026-10-24
+
+  - pattern: async_void_event_handler
+    status: active
+    description: "Event handlers must not be async void; asynchronous work is not permitted in the synchronous event path."
+    why: "An async void handler escapes SafeRaise after its first await, so subscriber exceptions cannot be isolated and event ordering becomes nondeterministic."
+    adr: docs/architecture/adr-0002-session-composition-model-ownership-and-event-contract.md
+    added: 2026-10-24
+
+  - pattern: public_snapshot_constructor
+    status: active
+    description: "ModelSnapshot must not expose a public constructor; creation must go through the validating Create factory."
+    why: "A public constructor allows invalid piles, undefined enum values or duplicate cards to enter Undo and Save paths."
+    adr: docs/architecture/adr-0003-model-snapshot-and-serialization-schema.md
+    added: 2026-10-24
+
+  - pattern: direct_domain_json_serialization
+    status: active
+    description: "Do not serialize ModelSnapshot, GameSnapshot or Card domain types directly; use explicit DTOs with the shared serializer options."
+    why: "Domain types carry ImmutableArray and enum details that System.Text.Json handles inconsistently; DTOs make the payload versioned and auditable."
+    adr: docs/architecture/adr-0003-model-snapshot-and-serialization-schema.md
+    added: 2026-10-24
 
 # Example:
 #

@@ -90,13 +90,13 @@ Toolbar & Menus 是牌桌之外的唯一命令入口：它把新局、选局、�
 
 - **选局对话框**：模态；数字输入，初始值 = 当前 N（`NoGame` 为 1）；范围 `deal_number_min..deal_number_max`（1–1,000,000）；OK/Cancel；非法输入显示行内错误并禁用 OK；Enter = OK（仅当 OK 可用），Esc = Cancel。确认调用 `State.select_deal(N)`；错误码映射为行内文案。
 - **统计对话框**：模态；只读显示局数、胜局、胜率（`win_percentage_exact`）、当前连胜、最长连胜；底部「重置统计…」；重置需二次确认（「清空所有统计？不可撤销；当前进行中的局不会计入。」）；确认后 `reset_stats()` 并刷新为零。默认按钮是「关闭」，Enter 不触发重置；重置确认的默认按钮是「取消」，Enter 不重置。
-- **Won 对话框**：模态；`StateChanged → Won` 时自动打开一次；标题「你赢了」，显示局号；按钮：新局（关闭 Won → 打开选局对话框）、下一局（`next_deal()`）、统计（关闭 Won → 打开统计对话框）、关闭。Enter = 关闭（默认，安全）。单模态交接：先关闭 Won 再打开目标对话框。下一局在 N=1,000,000 时显示「已到最大局号」并**保持 Won 对话框打开**。关闭后不改变状态；重复进入 Won 不重复弹窗（State 只发一次 `GameWon`）。
+- **Won 对话框**：模态；`GameWon` 时自动打开一次；标题「你赢了」，显示局号；按钮：新局（关闭 Won → 打开选局对话框）、下一局（`next_deal()`）、统计（关闭 Won → 打开统计对话框）、关闭。Enter = 关闭（默认，安全）。单模态交接：先关闭 Won 再打开目标对话框。下一局在 N=1,000,000 时显示「已到最大局号」并**保持 Won 对话框打开**。关闭后不改变状态；重复进入 Won 不重复弹窗（State 只发一次 `GameWon`）。`StateChanged` 只用于刷新命令与离开 Won 时关闭对话框。
 - **关于对话框**：模态；游戏名 + 「Windows 经典空当接龙复刻」；关闭；Enter/Esc = 关闭。
 - 所有模态对话框使用**透明全窗口输入阻挡层**：牌桌不可点击，但不做背景变暗/遮罩染色。同一时间只允许一个模态；Won 事件在统计/选局对话框打开时排队，待其关闭后再打开。
 
 **7. 横幅**
 
-- **Stuck 横幅**：非模态；`StateChanged → Stuck` 时显示；文本「没有可用的移动」；按钮：撤销（`can_undo` 时启用）、重开本局、新局（打开选局对话框）、关闭。横幅不阻断牌桌与菜单；关闭后不再自动出现，直到下一次进入 Stuck。离开 Stuck 时自动隐藏。
+- **Stuck 横幅**：非模态；`GameStuck` 时显示；文本「没有可用的移动」；按钮：撤销（`can_undo` 时启用）、重开本局、新局（打开选局对话框）、关闭。横幅不阻断牌桌与菜单；关闭后不再自动出现，直到下一次进入 Stuck。离开 Stuck 时由 `StateChanged` 自动隐藏。
 - **消息横幅**：非模态；显示命令失败/提示无可用移动等短消息；无自动超时；在下一次命令、状态变化或手动关闭时消失。Stuck 横幅优先于消息横幅；两者互斥。
 - 横幅位于牌桌底部居中，宽度 ≤ 480 窗口坐标 px，高度 ≤ 64 窗口坐标 px；可覆盖部分牌面，但可关闭，不阻挡牌桌输入（仅横幅自身按钮可点击）。
 
@@ -515,7 +515,7 @@ The command_enabled formula is defined as:
 - **AC-C21（选局对话框）** GIVEN 打开，THEN 预填当前 N（NoGame 为 1），OK/Cancel；Esc/Cancel → 不调用；合法+OK → `select_deal(N)` 恰一次、成功关闭；State 错误 → 保持打开、行内「局号必须是 1–1,000,000 的整数」、状态不变；对话框判合法但 State 拒绝 → 以 State 为准；非法输入 → OK 禁用且不调用。
 - **AC-C22（Won 对话框）** GIVEN `GameWon`，THEN 恰打开一次；标题「你赢了」、显示 N、按钮 新局/下一局/统计/关闭；已有模态时排队，关闭后再开；重复 `GameWon` 不弹第二次；关闭后仍 Won；离开 Won 关闭；下一局 N<max → `next_deal()`，N=max → 横幅「已到最大局号」且对话框保持打开；新局先关闭 Won 再开选局；统计先关闭 Won 再开统计。
 - **AC-C23（模态与焦点）** GIVEN 模态打开，THEN 点击外部牌桌无交互（不选牌/拖拽/移动），外部像素与关闭时逐像素相同；同一时间至多一个模态；关闭后焦点回牌桌、快捷键恢复；开关对话框不改变牌局状态。
-- **AC-C24（Stuck 横幅）** GIVEN 转为 Stuck，THEN 底部居中非模态显示「没有可用的移动」，按钮 撤销（can_undo 时可用）/重开本局/新局（打开选局）/关闭；不阻断牌桌与菜单；关闭后直到下次 Stuck 不再出现；离开 Stuck 自动隐藏。
+- **AC-C24（Stuck 横幅）** GIVEN `GameStuck`，THEN 底部居中非模态显示「没有可用的移动」，按钮 撤销（can_undo 时可用）/重开本局/新局（打开选局）/关闭；不阻断牌桌与菜单；关闭后直到下次 Stuck 不再出现；离开 Stuck 时由 `StateChanged` 自动隐藏。
 - **AC-C25（消息横幅）** GIVEN 命令失败/无提示，THEN 横幅出现，宽≤480、高≤64 窗口 px，无自动超时；下一次命令/状态变化/手动关闭消失；Stuck 优先且消息被丢弃不恢复；横幅可见时牌桌其余输入可用。
 - **AC-C26（错误文案映射）** GIVEN 各错误码，THEN 显示：`INVALID_DEAL_NUMBER`/`DEAL_NUMBER_OUT_OF_RANGE` → 选局行内「局号必须是 1–1,000,000 的整数」；`NO_CURRENT_GAME` → 「当前没有牌局」；`GAME_ALREADY_WON` → 「本局已胜利」；`MOVES_NOT_ACCEPTED` → 「当前状态不接受移动」；`COMMAND_IN_PROGRESS` → 「操作进行中，请稍候」；`GAME_NOT_READY` → 「牌局尚未准备好」；`AT_LIMIT` → 「已到最大局号」；`NOTHING_TO_UNDO`/`UNDO_NOT_ALLOWED` → 「当前不能撤销」；`RESTORE_FAILED`/`INVALID_SNAPSHOT` → 「撤销失败，牌局未变」；`NO_USEFUL_MOVES` → 「没有可用的移动」；`GAME_WON` → 不显示。映射集中一处（架构检查）。
 
@@ -541,7 +541,7 @@ The command_enabled formula is defined as:
 - **AC-X01（不直接调用 Model/Rules）** GIVEN 全部命令，WHEN 用依赖扫描与 spy 检查，THEN Toolbar 对 Card & Deck Model / Rules 的直接调用为 0。
 - **AC-X02（提示模型只经 snapshot）** GIVEN 触发 Hint，THEN `snapshot()` 恰一次，传给 `request_hint` 的是其 `.model` 同一引用；不缓存模型，第二次重新取快照。
 - **AC-X03（不直接改状态）** GIVEN 写检测替身/只读接口，WHEN 执行全部命令，THEN Toolbar 对 State/Undo/Hint/Statistics 的内部写入为 0，只调用公开命令。
-- **AC-X04（State 事件驱动）** GIVEN `GameStarted`/`GameRestarted`/`GameLoaded`，THEN 标题更新、关闭所有对话框/横幅、`Hint.reset()`；GIVEN `GameWon` 或 `StateChanged→Won`，THEN Won 对话框恰一次；GIVEN `StateChanged→Stuck`，THEN Stuck 横幅；离开 Stuck 隐藏、离开 Won 关闭；每次 `StateChanged` 刷新启用。
+- **AC-X04（State 事件驱动）** GIVEN `GameStarted`/`GameRestarted`/`GameLoaded`，THEN 标题更新、关闭所有对话框/横幅、`Hint.reset()`；GIVEN `GameWon`，THEN Won 对话框恰一次；GIVEN `GameStuck`，THEN Stuck 横幅；`StateChanged` 只刷新启用、离开 Stuck 时隐藏、离开 Won 时关闭；不得由 `StateChanged` 重复打开 Won/Stuck UI。
 - **AC-X05（Undo 事件）** GIVEN `UndoCommitted`/`UndoPerformed`/`UndoCleared`，THEN 刷新；`UndoFailed` → 「撤销失败，牌局未变」；使用 `can_undo(state)` 而非 `depth()`。
 - **AC-X06（Statistics 集成）** GIVEN 统计对话框，THEN 百分比 = `win_percentage_exact(快照计数器)`；无浮点重算；确认时 `reset_stats()` 恰一次、无其他写。
 - **AC-X07（高亮实参）** GIVEN 有提示，THEN source = `move.cards` 源堆完整顶部索引段，destination 按 −1/0/height−1；无结果 `clear_hint()` 一次；Toolbar 只转发不算几何。

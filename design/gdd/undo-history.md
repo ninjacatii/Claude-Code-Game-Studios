@@ -50,7 +50,7 @@ Undo History 保存当前牌局每一步合法移动前的模型快照，并在�
   - `state ∈ {NoGame, Dealing, Restoring, Won}` → `UNDO_NOT_ALLOWED`；`Playing` / `Stuck` 允许。
   - 弹出最近的已提交记录。
   - `model.restore(entry.snapshot)`（必须原子）。
-  - 成功 → `State.on_undo_applied()`；发出 `UndoPerformed(entry.move_result)`；返回成功。
+  - 成功 → 发出 `UndoPerformed(entry.move_result)`；GameStateMachine 订阅该事件并执行 `OnUndoPerformed` 重判；返回成功。
   - 失败 → **丢弃**该损坏记录（弹出后不推回，避免永久重试）；深度减 1；模型不变；发出 `UndoFailed`；返回 `RESTORE_FAILED`。
 - `can_undo(state) = depth > 0 ∧ pending = none ∧ state ∈ {Playing, Stuck}`。
 - 撤销 0ms、无动画；Table Rendering 同帧重绘。
@@ -65,7 +65,7 @@ Undo History 保存当前牌局每一步合法移动前的模型快照，并在�
 **6. 深度与内存**
 
 - 最大深度 4096；提交时若深度已是 4096：先 `evict stack[0]`，再 push；深度保持 4096，发出 `UndoEvicted`（带被丢弃的 `MoveResult`），不进入 4097 的瞬态。
-- 快照不可变，不共享、不原地修改。
+- 快照不可变；实现可以结构化共享未变化的内层数组，观察上等价于完整副本；任何快照都不得原地修改。
 - 内存 O(深度 × 快照大小)，受 4096 限制。
 
 **7. 事件**
@@ -96,7 +96,7 @@ Undo History 保存当前牌局每一步合法移动前的模型快照，并在�
 |------|------|------|------|------------|
 | Rules & Move Validator | 上游 | `MoveResult` | 无 | Rules 拥有判定 |
 | Card & Deck Model | 上游 | `snapshot` / `restore` | 恢复后的模型 | Model 拥有状态 |
-| Game State Machine | 接口 | 当前状态 / `on_undo_applied` / `clear` | 状态重判 | State 拥有生命周期 |
+| Game State Machine | 接口 / 下游（事件） | 当前状态 / `clear` | `UndoPerformed` / `UndoFailed` | State 订阅并重判；Undo 不直接调用 State |
 | Drag & Drop Interaction | 下游 | record/commit/discard | 撤销记录 | Undo 拥有历史 |
 | Toolbar & Menus | 下游 | 撤销命令 | 结果 | Toolbar 拥有命令 |
 | Table Rendering & Layout | 下游 | `UndoPerformed` | 重绘 | Rendering 拥有画面 |
@@ -222,7 +222,7 @@ The max_undo_depth formula is defined as:
 
 - **Rules & Move Validator**（Hard）：`MoveResult`；只读。
 - **Card & Deck Model**（Hard）：`snapshot()` / `restore()`；`restore` 必须原子。
-- **Game State Machine**（接口）：当前状态、`on_undo_applied()`、新局/重开/成功读档时的 `clear`。
+- **Game State Machine**（接口 / 事件）：当前状态、新局/重开/成功读档时的 `clear`；State 订阅 `UndoPerformed` 并执行 `OnUndoPerformed`。
 
 **下游依赖（依赖本系统的系统）**：
 
@@ -253,7 +253,7 @@ The max_undo_depth formula is defined as:
 
 - Drag & Drop 在 `model.move` 前 record、成功后 commit、失败/取消后 discard。
 - Toolbar 用 `can_undo(state)` 决定按钮可用性；Won/NoGame 时禁用。
-- State 在 `on_undo_applied` 后重新判定胜负；新局/重开/成功读档调用 `clear`。
+- State 订阅 `UndoPerformed`，在 `OnUndoPerformed` 中重新判定胜负；新局/重开/成功读档调用 `clear`。
 - Card & Deck Model 的 `restore` 原子且接受自身产出的快照。
 - Animation/Audio 对 `UndoPerformed` 做去重，不重复播放。
 
@@ -289,7 +289,7 @@ The max_undo_depth formula is defined as:
 |------|----------|------|
 | Rules & Move Validator | `MoveResult` 载荷 | GDD 已完成 |
 | Card & Deck Model | `snapshot` / `restore`（原子） | GDD 已完成 |
-| Game State Machine | 状态门控、`on_undo_applied`、`clear` | GDD 已完成 |
+| Game State Machine | 状态门控、`UndoPerformed` 订阅、`clear` | GDD 已完成 |
 | Drag & Drop Interaction | record/commit/discard 时序 | GDD 已完成 |
 | Toolbar & Menus | 撤销按钮/快捷键 | GDD 已完成（design/gdd/toolbar-menus.md） |
 | Table Rendering & Layout | 恢复后重绘 | GDD 已完成 |
@@ -309,7 +309,7 @@ The max_undo_depth formula is defined as:
 
 ### 撤销
 
-- **GIVEN** depth ≥ 1、无 pending、state 为 Playing 或 Stuck，**WHEN** `undo(state)`，**THEN** 原子恢复顶部快照、`State.on_undo_applied()` 执行、`UndoPerformed` 恰好一次、depth 减 1、返回成功。
+- **GIVEN** depth ≥ 1、无 pending、state 为 Playing 或 Stuck，**WHEN** `undo(state)`，**THEN** 原子恢复顶部快照、`UndoPerformed` 恰好一次、State 订阅者执行 `OnUndoPerformed`、depth 减 1、返回成功。
 - **GIVEN** state 为 Won / NoGame / Dealing / Restoring，**WHEN** `undo(state)`，**THEN** 返回 `UNDO_NOT_ALLOWED`，栈/depth/模型不变，不发 `UndoPerformed` 或 `UndoFailed`。
 - **GIVEN** 存在 pending，**WHEN** `undo(state)` 或 `can_undo(state)`，**THEN** undo 返回 `RECORD_IN_PROGRESS`、can_undo 为 false、栈不变。
 - **GIVEN** 顶部记录的 `model.restore` 失败，**WHEN** `undo(state)`，**THEN** 丢弃该坏记录、depth 减 1、模型不变、发出 `UndoFailed`、返回 `RESTORE_FAILED`。

@@ -100,7 +100,7 @@ Table Rendering 无游戏状态机；以下是布局/绘制状态：
 | 系统 | 方向 | 流入 | 流出 | 接口所有权 |
 |------|------|------|------|------------|
 | Card & Deck Model | 上游 | 牌堆/牌读取 | 无 | Model 拥有状态 |
-| Drag & Drop Interaction | 下游 | 拖拽状态 | `hit_test` / `card_rect` / `set_drag_layer` / `set_source_hidden` | Rendering 拥有几何 |
+| Drag & Drop Interaction | 下游 | 拖拽事件（`DragStarted` / `DragMoved` / `DragDropped` / `DragCancelled`） | `hit_test` / `card_rect`；TableView 消费事件并绘制拖拽层/隐藏源牌 | Rendering 拥有几何 |
 | Animation & Feedback | 下游 | 起止矩形 | 插值动画 | Animation 拥有表现 |
 | Toolbar & Menus | 下游 | 覆盖层 | 层级 | Toolbar 拥有 UI |
 | Hint System | 下游 | 高亮请求 | 无 | Hint 拥有选择；Toolbar 转发 |
@@ -111,8 +111,7 @@ Table Rendering 无游戏状态机；以下是布局/绘制状态：
 
 - `hit_test(logical_pos) -> HitResult | null`（`HitResult = { pile, card_index }`；空列 `card_index = -1`）
 - `card_rect(pile, index) -> Rect`（0-based 自底向顶；顶行 index 0）
-- `set_drag_layer(unit, visible)`
-- `set_source_hidden(pile, count, hidden)`
+- `show_drag_layer(unit, logical_position)` / `move_drag_layer(logical_position)` / `hide_drag_layer()` / `set_source_hidden(pile, count, hidden)`：TableView 内部绘制接口，由 `DragStarted` / `DragMoved` / `DragDropped` / `DragCancelled` 驱动；Drag 不直接调用 TableView。
 - `set_hint_highlight(source, destination)` / `clear_hint()`：Hint GDD 定义的提示高亮；由 Toolbar 转发。`source` 为 `move.cards` 的源堆与索引；`destination` 索引：空桌面列 −1、空顶行槽 0、非空牌堆 height−1。
 - `to_logical(window_pos)` / `to_window(logical_pos)` / `get_scale()` / `get_offset()`
 - Table Rendering 不修改模型、不处理输入、不播放动画。
@@ -296,7 +295,7 @@ The coordinate_transform formula is defined as:
 
 | 系统 | 类型 | 接口 | 备注 |
 |------|------|------|------|
-| Drag & Drop Interaction | Hard | `hit_test` / `card_rect` / `set_drag_layer` / `set_source_hidden` | 几何与拖拽层 |
+| Drag & Drop Interaction | Hard | `hit_test` / `card_rect`；Drag 事件由 TableView 消费 | 几何与拖拽层 |
 | Animation & Feedback | Soft | 起止矩形 | 回弹/落位插值 |
 | Toolbar & Menus | Soft | 覆盖层层级 | 胜利/卡死覆盖层 |
 | Readability & Accessibility | Soft | 卡牌矩形/几何 | 高对比/键盘替代在 Full Vision |
@@ -306,8 +305,7 @@ The coordinate_transform formula is defined as:
 
 - `hit_test(logical_pos) -> HitResult | null`（`HitResult = { pile, card_index }`；空列 `card_index = -1`；画布外 null）
 - `card_rect(pile, index) -> Rect`（0-based 自底向顶；顶行 index 0；空列用 `tableau_y(0)`）
-- `set_drag_layer(unit, visible)`
-- `set_source_hidden(pile, count, hidden)`
+- `show_drag_layer(unit, logical_position)` / `move_drag_layer(logical_position)` / `hide_drag_layer()` / `set_source_hidden(pile, count, hidden)`：TableView 内部绘制接口，由 `DragStarted` / `DragMoved` / `DragDropped` / `DragCancelled` 驱动；Drag 不直接调用 TableView。
 - `set_hint_highlight(source, destination)` / `clear_hint()`：Hint GDD 定义的提示高亮；由 Toolbar 转发。`source` 为 `move.cards` 的源堆与索引；`destination` 索引：空桌面列 −1、空顶行槽 0、非空牌堆 height−1。
 - `to_logical(window_pos)` / `to_window(logical_pos)` / `get_scale()` / `get_offset()`
 - Table Rendering 不修改模型、不处理输入、不播放动画。

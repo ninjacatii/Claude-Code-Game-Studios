@@ -39,7 +39,7 @@ engine:
   language: "C#"
   rendering: "Forward+"
   physics: "Godot Physics 2D"
-  # path: "C:/path/to/Godot_v4.7.2-stable_mono_win64.exe"  # TODO: set after installing Godot .NET
+  path: "D:/Godot_v4.7.2-stable_mono_win64/Godot_v4.7.2-stable_mono_win64.exe"
 
 specialists:
   code: "godot-csharp-specialist"

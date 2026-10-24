@@ -89,7 +89,7 @@ Deal Generator 把玩家选择的局号转换为一副确定的 52 张牌序列�
 | Game State Machine | 下游 | 新局/重开请求 + 局号 | 发牌结果 | State 拥有生命周期；Generator 无状态 |
 | Toolbar & Menus | 下游 | 玩家选择的局号 | 生成请求 | Toolbar 拥有输入；经 State 调用 |
 | Statistics & Records | 间接 | 无直接接口 | 通过 State 的 GameStarted 记录 | Stats 不记录局号；Generator 不直接交互 |
-| Save/Resume Game | 下游 | 局号 | 恢复时重新生成 | Save 拥有格式；Generator 无状态 |
+| Save/Resume Game | 下游 | 完整 `GameSnapshot` | 恢复时校验并加载，不重新生成 | Save 拥有格式；Generator 无状态 |
 | Hint System | 无 | — | — | 不直接交互 |
 | Table Rendering / Animation / Audio | 无 | — | — | 通过模型间接消费 |
 | Settings / Accessibility | 无 | — | — | 不直接交互 |
@@ -224,7 +224,7 @@ for all `c ∈ 1..8`, `r ∈ 0..(deal_column_height(c) − 1)`
 - **If 算法版本变更**: 所有局号结果变化，属破坏性变更；必须提升存档/序列化版本并在变更日志中注明。
 - **If 并发调用**: 纯函数，允许并发；若共享缓存，缓存需线程安全或不可变。
 - **If UI 请求超出范围的“上一局/下一局”**: Generator 拒绝为 `DEAL_NUMBER_OUT_OF_RANGE`；Toolbar & Menus / Game State Machine 负责在边界停住或回绕，不把越界值传给 Generator。
-- **If 存档只保存局号**: 恢复时重新生成；若算法版本不同，必须拒绝或迁移，不得静默生成不同牌局。
+- **If 存档保存完整快照**: 恢复时校验 schema、算法版本与模型不变量，不重新生成；算法版本不匹配必须拒绝，不得静默加载。
 - **If 字符串输入带前导零或本地化数字**: 解析为整数由 UI 负责；`000123` 与 `123` 视为同一局号，格式错误由 UI 返回 `INVALID_DEAL_NUMBER`。
 
 ## Dependencies
@@ -238,7 +238,7 @@ for all `c ∈ 1..8`, `r ∈ 0..(deal_column_height(c) − 1)`
 | Game State Machine | Hard | 新局/重开时调用 `generate(N)`，把序列交给 `deal()` | State 拥有生命周期；Generator 无状态 |
 | Toolbar & Menus | Soft | 玩家输入局号，经 State 调用 | 边界处理归 Toolbar/State |
 | Statistics & Records | 间接 | 无直接接口 | 通过 State 的 GameStarted 记录；不记录局号 |
-| Save/Resume Game | Soft | 保存局号，恢复时重新生成 | 必须校验算法版本 |
+| Save/Resume Game | Soft | 保存完整 `GameSnapshot`（含模型）；局号与算法版本用于校验/显示，不用于重新生成 | 必须校验算法版本 |
 | Hint System | None | 不直接交互 | — |
 | Table Rendering / Animation / Audio | None | 通过模型间接消费 | — |
 | Settings / Accessibility | None | 不直接交互 | — |
@@ -255,7 +255,7 @@ for all `c ∈ 1..8`, `r ∈ 0..(deal_column_height(c) − 1)`
 
 - Game State Machine 在 `generate(N)` 成功后立即调用 `Card & Deck Model.deal(sequence)`。
 - Toolbar & Menus 负责把用户输入解析为 1–1,000,000 的整数，并在边界处停止或回绕。
-- Save/Resume Game 保存局号与算法版本；恢复时校验版本后重新生成。
+- Save/Resume Game 保存完整 `GameSnapshot`（含模型、局号、状态与算法版本）；恢复时校验 schema 与算法版本，不重新生成牌局。
 - Statistics & Records 通过 State 的 GameStarted 记录局数/胜负，不记录局号；不做可解性判断。
 
 **Registry references**：`deal_column_height` 与 `deal_start_index` 的 `referenced_by` 应追加 `design/gdd/deal-generator.md`（Phase 5b 更新）。
@@ -278,7 +278,7 @@ for all `c ∈ 1..8`, `r ∈ 0..(deal_column_height(c) − 1)`
 |-------------|----------|------|
 | Card & Deck Model | `deal_start_index`、`deal_column_height`、列优先收牌契约 | GDD 已完成 |
 | Microsoft FreeCell 算法 | LCG、牌序、行优先发牌；#1 / #617 官方向量 | 已查证（freeCodeCamp / Rosetta Code） |
-| Save/Resume Game | 保存局号与算法版本；恢复时重新生成 | GDD 未编写 |
+| Save/Resume Game | 保存完整 `GameSnapshot`；恢复时校验并加载，不重新生成 | GDD 未编写 |
 | Game State Machine | 调用 `generate(N)` 并把序列交给模型 | GDD 已完成（design/gdd/game-state-machine.md） |
 
 算法与官方向量来源：freeCodeCamp Rosetta Code — *Deal cards for FreeCell*（`https://raw.githubusercontent.com/freeCodeCamp/freeCodeCamp/57dca1e495aa6312864cc0a5038cc61e4fea8086/curriculum/challenges/english/22-rosetta-code/rosetta-code-challenges/deal-cards-for-freecell.md`），2026-10-24 查证。

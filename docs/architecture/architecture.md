@@ -6,7 +6,7 @@
 - **Last Updated**: 2026-10-24
 - **Engine**: Godot 4.7.2 / C# / .NET 8 / Forward+
 - **GDDs Covered**: `card-deck-model`, `deal-generator`, `rules-move-validator`, `game-state-machine`, `drag-drop-interaction`, `undo-history`, `hint-system`, `statistics-records`, `table-rendering-layout`, `toolbar-menus`
-- **ADRs Referenced**: none yet — 0 ADRs exist; all decisions below are proposals until their ADRs are written
+- **ADRs Referenced**: ADR-0001 (Proposed), ADR-0002 (Proposed), ADR-0003 (Proposed); no Accepted ADRs yet
 - **TD-ARCHITECTURE**: 2026-10-24 — skipped — lean mode
 - **LP-FEASIBILITY**: 2026-10-24 — skipped — lean mode
 
@@ -94,8 +94,10 @@ be used as the basis of a blocking ADR.
 
 | Layer | Module / system | Status | Responsibility |
 |---|---|---|---|
-| **App** (composition root, not a GDD system) | `GameBootstrap` | Architecture addition | Constructs services, wires events, owns startup/shutdown; the only place that knows every concrete type |
+| **App** (composition root, not a GDD system) | `GameBootstrap` | Architecture addition | The only Godot node and the only constructor of concrete services; constructs the object graph, binds Presentation, owns startup/shutdown |
+| | `GameSession` | Architecture addition | Pure C# container; holds the constructed services, owns the one model reference for the session lifetime, wires internal events; never constructs services |
 | **Presentation** | Table View (drawing half of Table Rendering & Layout) | MVP | Card/table drawing, drag layer, hint highlight, source hiding |
+| | Drag Input Adapter (Presentation half of Drag & Drop) | MVP | Converts Godot `InputEvent` and window coordinates into pure `DragDropController` calls |
 | | Toolbar & Menus | MVP | Menu bar, dialogs, banners, title, command gating |
 | | Animation & Feedback | VS, no GDD | Placeholder only |
 | | Audio & SFX | VS, no GDD | Placeholder only |
@@ -117,7 +119,7 @@ be used as the basis of a blocking ADR.
 ### 2.2 Dependency Direction
 
 ```text
-App / GameBootstrap
+App: GameBootstrap (constructor) + GameSession (pure container)
         |
         v
 Presentation: TableView, Toolbar, Animation, Audio, Settings, Accessibility
@@ -157,6 +159,11 @@ This split resolves an otherwise inverted dependency: the GDD lets Table
 Rendering read `State.NoGame`, but State is Feature and Table Layout is Core.
 After the split, Table View subscribes to State events; Table Layout never
 depends on State. Observable behavior is unchanged.
+
+`Drag & Drop Interaction` follows the same pattern: the pointer state machine
+stays pure C# in Feature, while `DragInputAdapter : Node` in Presentation owns
+`_UnhandledInput`, device-type checks and window→logical conversion. Drag emits
+events; Table View consumes them. Drag never calls a Godot view directly.
 
 ### 2.4 Engine Awareness — Foundation/Core
 
@@ -206,7 +213,7 @@ written.
 | **Undo History** | LIFO snapshot stack, pending slot, depth cap | `RecordBeforeMove/Commit/Discard`, `Undo`, `Clear`, `CanUndo`, events | Model, `GameState` vocabulary | none; pure C# — LOW |
 | **Hint System** | Candidate cache `H = (ranked_moves, cursor)` | `RequestHint`, `Reset` | Rules, Model read-only | none; pure C# — LOW |
 | **Statistics & Records** | Session counters, active game | `OnGameStarted/OnGameWon/...`, `GetStats`, `ResetStats` | State events | none; pure C# — LOW |
-| **Drag & Drop Interaction** | Pointer lifecycle, drag unit, grab offset, cancellation | `OnPointerDown/Move/Up/Cancel`, `IsDragging`, `DragUnit`, drag events | State, Rules, Model, Undo, Table Layout | ⚠️ `Node._UnhandledInput`, `InputEventMouseButton/Motion/Key`, `DoubleClick`, device type checks — HIGH (4.7 device IDs, 4.6 dual focus); C# binding names **NEEDS VERIFICATION** |
+| **Drag & Drop Interaction** | Pointer lifecycle, drag unit, grab offset, cancellation | `OnPointerDown/Move/Up/Cancel`, `IsDragging`, `DragUnit`, drag events | State, Rules, Model, Undo, Table Layout | none; pure C# — LOW. Godot input lives in the Presentation `DragInputAdapter` |
 | **Save/Resume Game** (VS) | Save envelope, version, file location | `Save/Load` (to be designed) | State snapshot, Deal version | ⚠️ `FileAccess` or `System.IO` — HIGH (4.4 `store_*` returns `bool`); format **NOT DESIGNED** |
 
 ### 3.4 Presentation
@@ -214,6 +221,7 @@ written.
 | Module | Owns | Exposes | Consumes | Engine APIs / risk |
 |---|---|---|---|---|
 | **Table View** | Card/empty-slot drawing, atlas, drag layer visuals, hint highlight, source hiding | `Bind`, `Redraw`, `SetHintHighlight/ClearHint`, `IDragView` | Model read-only, Table Layout, State/Undo/Drag events | ⚠️ `Node2D`, `Sprite2D`, `AtlasTexture`, `Viewport.SizeChanged`, `DisplayServer.ScreenGetScale()` — HIGH (4.7 line AA, stretch defaults, HiDPI) |
+| **Drag Input Adapter** | Godot input capture, device-type checks, window→logical conversion, Esc/right-click/focus-loss cancel | `_UnhandledInput`; pure `DragDropController` calls | Godot `InputEvent`, Table Layout | ⚠️ `Node._UnhandledInput`, `InputEventMouseButton/Motion/Key`, `DoubleClick`, device type checks — HIGH (4.7 device IDs, 4.6 dual focus); C# binding names **NEEDS VERIFICATION** |
 | **Toolbar & Menus** | Menu bar, dialogs, banners, title, command gating, string table | `Bind`, `RefreshCommands`, dialog commands | State/Undo/Hint/Stats/Table View/Drag events | ⚠️ `Control`, `MenuBar`, `PopupMenu`, `AcceptDialog`, `ConfirmationDialog`, `LineEdit`, `CanvasLayer`, `Window.Title`, focus — HIGH (4.6 dual focus, 4.7 stretch/accessibility type) |
 | **Animation / Audio / Settings / Accessibility** | Not designed | Placeholder interfaces only | — | Not assessed; must not bind APIs before their GDDs and ADRs |
 
@@ -221,7 +229,8 @@ written.
 
 | Module | Owns | Exposes | Consumes | Engine APIs / risk |
 |---|---|---|---|---|
-| **GameBootstrap** | Construction order, service instances, event wiring, startup/shutdown | Entry point only | Every module | `Node`, `SceneTree`, `PackedScene` — LOW |
+| **GameBootstrap** | Construction order, concrete service instances, Presentation binding, startup/shutdown | Entry point only | Every module | `Node`, `SceneTree`, `PackedScene` — LOW |
+| **GameSession** | Session lifetime of the one model; internal State→Statistics and Undo→State wiring | Read-only service references for `Bind()` | Constructed services only | none; pure C# — LOW |
 
 ### 3.6 Key Ownership Decisions
 
@@ -230,9 +239,9 @@ written.
    stores only snapshots.
 2. **State and Undo do not hold each other as concrete objects.** State depends
    on `IUndoHistory.Clear()`; Undo depends on the `GameState` vocabulary and
-   raises `UndoPerformed`. State subscribes to that event and runs
-   `OnUndoApplied`. This preserves the GDD's observable behavior while removing
-   a compile-time cycle.
+   raises `UndoPerformed`. `GameSession` subscribes State's
+   `OnUndoPerformed` to that event. This preserves the GDD's observable
+   behavior while removing a compile-time cycle.
 3. **Drag does not depend on Table View.** Drag depends on Table Layout and its
    own events. Table View subscribes to `DragStarted/Moved/Dropped/Cancelled` and
    draws the drag layer/hides the source. The GDD's
@@ -242,8 +251,11 @@ written.
    directly. Hint receives the model via `State.Snapshot().Model`.
 5. **Statistics only consumes State events.** It does not read Model, Rules, or
    Undo.
-6. **`GameBootstrap` is the only composition root.** No service locator, no
-   global singleton, no static mutable state.
+6. **`GameBootstrap` is the only constructor; `GameSession` is a pure
+   container.** `GameBootstrap` creates every concrete service and passes them
+   to `GameSession`; `GameSession` holds and wires them but never `new`s a
+   gameplay service. No service locator, no global singleton, no static mutable
+   state.
 
 ---
 
@@ -254,29 +266,42 @@ written.
 ```text
 Main.tscn
   -> GameBootstrap._Ready()
+    -> new GodotGameLogger()
+    -> new CommandGate()
     -> new CardDeckModel()
     -> new DealGenerator(), new RulesMoveValidator(), new TableLayout(viewport size)
-    -> new UndoHistory(model)
-    -> new GameStateMachine(model, deal, rules, undo)
+    -> new UndoHistory(model, gate, logger)
+    -> new GameStateMachine(model, deal, rules, undo, gate, logger)
     -> new HintSystem(rules), new Statistics()
-    -> new TableView(model, layout)
-    -> new DragDropController(state, rules, model, undo, layout)
-    -> new ToolbarController(...)
-    -> wire events (State/Undo/Drag -> views)
+    -> new DragDropController(state, rules, model, undo, layout, gate, logger)
+    -> new GameSession(constructed services)
+    -> TableView.Bind(ICardDeckReadModel, layout, state, undo, drag, logger)
+    -> Toolbar.Bind(state, undo, hint, stats, tableView, drag)
+    -> DragInputAdapter.Bind(drag, layout)
     -> set minimum window size 1024x576
-    -> initial state NoGame; optionally State.NewGame(1) per QQ-01
+    -> initial state NoGame; optionally State.NewGame(1) after Bind per QQ-01
+
+GameBootstrap._ExitTree()
+  -> GameSession.Dispose()   [internal subscriptions only]
 ```
 
 - Construction order: Foundation → Core → Feature → Presentation → App.
 - All services are constructed on the main thread; there is no async
   initialization.
-- `GameBootstrap` is the only place that knows every concrete type.
+- `GameBootstrap` is the only place that knows every concrete type and the only
+  constructor. `GameSession` is a pure C# container that holds and wires the
+  constructed services.
+- No event may be raised before `Bind()`; if auto-start is chosen, call
+  `State.NewGame(1)` after all three `Bind()` calls.
+- Presentation adapters subscribe in `Bind()` and unsubscribe in `_ExitTree()`;
+  `GameBootstrap` does not unsubscribe them.
 
 ### 4.2 Drag and Drop (the frame-critical path)
 
 ```text
 InputEvent (mouse)
-  -> DragDropController._UnhandledInput
+  -> DragInputAdapter._UnhandledInput
+    -> DragDropController.OnPointerDown/Move/Up(logical)
     -> TableLayout.ToLogical / HitTest
     -> State.CanAcceptMoves()
     -> Rules.ValidSequence / CanMove
@@ -325,7 +350,7 @@ Toolbar Ctrl+Z
   -> UndoHistory.Undo(State.State)
     -> CardDeckModel.Restore(snapshot)   [atomic]
     -> UndoPerformed
-      -> GameStateMachine.OnUndoApplied()
+      -> GameStateMachine.OnUndoPerformed(UndoPerformed)
         -> StateChanged / Won / Stuck
           -> TableView.Redraw()
           -> Toolbar.RefreshCommands()
@@ -346,12 +371,21 @@ Toolbar
     -> CardDeckModel.Deal(sequence)
     -> Undo.Clear()
     -> State = Playing
-    -> GameStarted / GameRestarted / GameLoaded
-      -> TableView.Redraw()
-      -> Statistics.OnGameStarted()
-      -> Toolbar: title, close dialogs/banners, Hint.Reset()
+    -> StateChanged
+    -> GameStarted            [new game]
+       -> Statistics.OnGameStarted()
+       -> Toolbar: title, close dialogs/banners, Hint.Reset()
+       -> TableView.Redraw()
+    -> GameRestarted          [restart]
+       -> Toolbar: title, close dialogs/banners, Hint.Reset()
+       -> TableView.Redraw()
+    -> GameLoaded             [load]
+       -> Toolbar: title, close dialogs/banners, Hint.Reset()
+       -> TableView.Redraw()
 ```
 
+- Statistics subscribes only to `GameStarted` and `GameWon`. It does not
+  subscribe `GameRestarted`, `GameStuck` or `GameLoaded` in MVP.
 - Only a successful load clears Undo. A failed load leaves history intact and
   does not emit `GameLoaded`.
 - A won snapshot loaded from disk emits `GameLoaded` only, not `GameWon`.
@@ -376,7 +410,7 @@ Viewport.SizeChanged
 
 ```text
 State.Snapshot()
-  -> SaveService.Serialize(envelope: algorithmVersion + gameSnapshot + stats?)
+  -> SaveService.Serialize(envelope: schemaVersion + algorithmVersion + gameSnapshot)
   -> file
 
 file
@@ -392,14 +426,41 @@ file
 
 ### 4.8 Event Architecture
 
-- **Direct typed C# events**, no global event bus.
-- Owners publish: State, Undo, Drag.
-- `GameBootstrap` wires subscriptions. Subscribers depend on event contracts,
-  not on the publisher's concrete type.
-- Events are synchronous, ordered, and non-reentrant. State emits after its own
-  state is updated. A subscriber exception must not roll back state; use a
-  `SafeRaise` helper that catches and logs per subscriber.
+- **Direct typed C# events**, no global event bus. Owners publish; subscribers
+  depend on event contracts, not concrete publishers.
+- `GameSession` wires the internal graph: State → Statistics (`GameStarted`,
+  `GameWon`) and Undo → State (`UndoPerformed`). Presentation subscribes in
+  `Bind()` and unsubscribes in `_ExitTree()`.
+- Events are synchronous, ordered, and non-reentrant. State updates first, then
+  raises `StateChanged` (only when `from != to`), then the specific event.
+  `Dealing` / `Restoring` are transient and are not published.
+- Exactly-once: `GameStarted`/`GameRestarted`/`GameLoaded` per successful
+  command; `GameWon`/`GameStuck` once per terminal entry from move/undo, never
+  from load.
+- A subscriber exception must not roll back state. `SafeRaise` catches per
+  subscriber, logs via `IGameLogger`, and continues. Event handlers must not be
+  `async void`.
+- A shared `CommandGate` in Foundation is held across state update and event
+  dispatch. A mutating command called from a handler returns
+  `COMMAND_IN_PROGRESS`.
 - There is no cross-thread event flow.
+
+**Event consumption matrix:**
+
+| Event | Consumers |
+|---|---|
+| `StateChanged` | Toolbar (refresh/hide), TableView (mode), Drag (cancel on state change) |
+| `GameStarted` | Statistics, Toolbar, TableView |
+| `GameRestarted` | Toolbar, TableView |
+| `GameWon` | Statistics, Toolbar (Won dialog), Audio (VS) |
+| `GameStuck` | Toolbar (Stuck banner), Audio (VS) |
+| `GameLoaded` | Toolbar, TableView |
+| `UndoPerformed` | State (re-evaluate), Toolbar, TableView, Audio (VS) |
+| `UndoFailed` | Toolbar, debug |
+| `DragStarted` / `DragDropped` / `DragCancelled` | TableView, Toolbar |
+| `DragMoved` | TableView |
+| `MoveExecuted` | Audio (VS), Animation (VS); not State |
+| `MoveRejected` | Audio (VS), debug |
 
 ### 4.9 Threading
 
@@ -437,6 +498,17 @@ public readonly record struct Result(bool Success, ErrorCode Error);
 public readonly record struct Result<T>(bool Success, T Value, ErrorCode Error);
 
 public readonly record struct LogicalRect(double X, double Y, double Width, double Height);
+
+public interface IGameLogger
+{
+    void Error(string message, Exception? exception = null);
+}
+
+public sealed class CommandGate
+{
+    public bool IsBusy { get; }
+    public IDisposable? TryEnter();   // null when busy
+}
 ```
 
 **Naming note.** `Move` is the intent used by Hint and `LegalMoves`.
@@ -446,7 +518,7 @@ the model (`Success`, `FailureReason`). Do not collapse these into one type.
 ### 5.2 Card & Deck Model
 
 ```csharp
-public interface ICardDeckModel
+public interface ICardDeckReadModel
 {
     int Revision { get; }                 // increments on every successful mutation
     bool IsDealt { get; }
@@ -458,18 +530,29 @@ public interface ICardDeckModel
     int EmptyFreeCellCount { get; }
     int EmptyTableauColumnCount { get; }
     bool GameComplete { get; }
+}
 
+public interface ICardDeckModel : ICardDeckReadModel
+{
     ModelMoveResult Move(PileId source, PileId destination, int count);
-    ModelSnapshot Snapshot();
-    Result Restore(ModelSnapshot snapshot);
-    Result Deal(DealSequence sequence);
-
-    string Serialize();                       // schema version in the payload
+    ModelSnapshot Snapshot();                 // O(1), immutable, shared inner arrays
+    SnapshotRestoreResult Restore(ModelSnapshot snapshot);
+    Result Deal(DealSequence sequence);       // atomic replace; invalid input leaves state unchanged
+    // no Serialize(): ModelSnapshotSerializer is the only JSON path
 }
 ```
 
+`ModelSnapshot` is a sealed class with a private constructor and a single
+`Create` factory; it validates enum values, pile shapes and 52-card uniqueness.
+`ModelSnapshotSerializer` (Foundation) converts it to/from explicit DTOs;
+`GameSnapshotSerializer` (`Feature/State/Serialization/`) wraps
+`SchemaVersion` + `AlgorithmVersion` + `DealNumber` + `GameState` + model DTO.
+See ADR-0003 for the schema, error mapping and atomicity rules.
+
 **Caller invariants:**
 
+- `TableView` and other read-only consumers bind `ICardDeckReadModel`; only
+  Drag and State receive the mutable `ICardDeckModel`.
 - `Move` is called only after `Rules.CanMove` returns `Legal = true`; `Deal` is
   called only by State during new/restart/load.
 - Reads return immutable collections; callers cannot mutate the model through
@@ -531,25 +614,31 @@ public interface IGameStateMachine
     Result PreviousDeal();
     Result SelectDeal(int dealNumber);
     Result OnMoveApplied(ModelMoveResult result);
-    Result OnUndoApplied();
+    void OnUndoPerformed(UndoPerformed e);     // internal transition; gate already held
 
     Result<GameSnapshot> Snapshot();          // NoGame/Dealing/Restoring -> GAME_NOT_READY
     Result LoadGame(GameSnapshot snapshot);
 
-    event Action<GameStarted> GameStarted;
-    event Action<GameRestarted> GameRestarted;
-    event Action<GameWon> GameWon;
-    event Action<GameStuck> GameStuck;
-    event Action<GameLoaded> GameLoaded;
-    event Action<StateChanged> StateChanged;
+    event Action<GameStarted>? GameStarted;
+    event Action<GameRestarted>? GameRestarted;
+    event Action<GameWon>? GameWon;
+    event Action<GameStuck>? GameStuck;
+    event Action<GameLoaded>? GameLoaded;
+    event Action<StateChanged>? StateChanged;
 }
 ```
 
 **Caller invariants:**
 
 - `NewGame` clears Undo only on success.
-- `GameStarted` is emitted exactly once per successful `new_game`.
-- `GameWon`/`GameStuck` is emitted once per terminal entry.
+- `GameStarted` is emitted exactly once per successful `new_game`;
+  `GameRestarted`/`GameLoaded` likewise.
+- `GameWon`/`GameStuck` is emitted once per terminal entry from move/undo.
+  `LoadGame` never emits them, even when the snapshot is already won.
+- `StateChanged` fires only when `from != to`; transient `Dealing`/`Restoring`
+  states are not published.
+- `OnUndoPerformed` is called only from the `UndoPerformed` subscription wired
+  by `GameSession`; it must not enter `CommandGate` again.
 - Events are synchronous; subscriber exceptions do not roll back state.
 - `Snapshot` does not write files; serialization belongs to Save/Resume.
 
@@ -567,8 +656,8 @@ public interface IUndoHistory
     int Depth { get; }
     MoveResult? Peek();
 
-    event Action<UndoPerformed> UndoPerformed;
-    event Action<UndoFailed> UndoFailed;
+    event Action<UndoPerformed>? UndoPerformed;
+    event Action<UndoFailed>? UndoFailed;
     // other events per GDD: UndoRecorded, UndoCommitted, UndoEvicted, UndoCleared
 }
 ```
@@ -633,20 +722,27 @@ public interface IDragDropController
     bool IsDragging { get; }
     Move? DragUnit { get; }
 
-    event Action<DragStarted> DragStarted;
-    event Action<DragMoved> DragMoved;
-    event Action<DragDropped> DragDropped;
-    event Action<DragCancelled> DragCancelled;
-    event Action<MoveExecuted> MoveExecuted;
-    event Action<MoveRejected> MoveRejected;
+    event Action<DragStarted>? DragStarted;
+    event Action<DragMoved>? DragMoved;
+    event Action<DragDropped>? DragDropped;
+    event Action<DragCancelled>? DragCancelled;
+    event Action<MoveExecuted>? MoveExecuted;
+    event Action<MoveRejected>? MoveRejected;
 }
 ```
+
+`IDragDropController` is pure C# and uses `System.Numerics.Vector2` for logical
+points. `DragInputAdapter : Node` in Presentation owns `_UnhandledInput`, the
+4.7 device-type checks and the window→logical conversion, then calls
+`OnPointerDown/Move/Up`. Drag never references a Godot view.
 
 **Caller invariants:**
 
 - `OnPointer*` receives logical coordinates; indices are 0-based bottom-to-top.
 - A drag starts only when `State.CanAcceptMoves()` is true.
 - The legal path is exactly `record -> move -> commit -> State.OnMoveApplied`.
+  State is called directly; `MoveExecuted` is a post-state notification for
+  Audio/Animation, not a State trigger.
 - Cancel/reject paths call `DiscardPending`; model and State remain unchanged.
 
 ### 5.10 Table Layout (Core)
@@ -679,7 +775,14 @@ public sealed class TableLayout
 ```csharp
 public partial class TableView : Node2D, IDragView
 {
-    public void Bind(ICardDeckModel model, TableLayout layout);
+    public void Bind(
+        ICardDeckReadModel model,
+        TableLayout layout,
+        IGameStateMachine state,
+        IUndoHistory undo,
+        IDragDropController drag,
+        IGameLogger logger);
+
     public void Redraw();
     public void SetHintHighlight(Move move);
     public void ClearHint();
@@ -694,6 +797,8 @@ public partial class TableView : Node2D, IDragView
 
 **Caller invariants:**
 
+- Binds `ICardDeckReadModel`, never the mutable `ICardDeckModel` and never
+  `FreeCell.App.GameSession`.
 - Read-only model; never mutates State or Undo.
 - Redraws in the same frame as State/Undo/Drag events.
 - Source hiding and drag-layer display are same-frame; legal drops are 0 ms.
@@ -721,7 +826,10 @@ public partial class ToolbarController : Control
 
 **Caller invariants:**
 
+- Binds only Foundation/Core/Feature interfaces; never `FreeCell.App.GameSession`.
 - The only command entry point; never calls Model or Rules directly.
+- Opens the Won dialog on `GameWon` and the Stuck banner on `GameStuck`;
+  `StateChanged` only refreshes commands and closes views when leaving a state.
 - All visible strings come from the string table through `tr()`; error-code to
   text mapping lives in one place.
 - Modal dialogs suppress global shortcuts; the specified commands are disabled
@@ -748,12 +856,14 @@ public partial class ToolbarController : Control
 
 ### 6.1 ADR Audit
 
-`docs/architecture/adr-*.md`: **0 ADRs**. There is nothing to audit for engine
-compatibility, version recording, GDD linkage, or cross-ADR conflicts.
+`docs/architecture/adr-*.md`: **3 ADRs**, all `Proposed`. Engine compatibility,
+version and GDD linkage are present; none is `Accepted` yet.
 
 | ADR | Engine Compat | Version | GDD Linkage | Conflicts | Valid |
 |---|---|---|---|---|---|
-| — | — | — | — | — | — |
+| ADR-0001 Layered boundaries and pure C# core | ✅ | ✅ | ✅ | None | ⚠️ Proposed |
+| ADR-0002 Session composition, model ownership, and event contract | ✅ | ✅ | ✅ | None | ⚠️ Proposed |
+| ADR-0003 Model snapshot and serialization schema | ✅ | ✅ | ✅ | None | ⚠️ Proposed |
 
 ### 6.2 Technical Requirements Baseline
 
@@ -786,9 +896,11 @@ list is in Appendix A.
 | Table Rendering & Layout | 001–008 | 0/8 |
 | Toolbar & Menus | 001–009 | 0/9 |
 
-**Interpretation.** 76/76 gaps is the expected first-pass state: no ADRs exist
-yet. The required ADRs below group the decisions; `/architecture-review` will
-build the formal traceability matrix after they are written.
+**Interpretation.** 0/76 formally covered because no ADR is `Accepted` and
+`/architecture-review` has not built the matrix yet. ADR-0001, ADR-0002 and
+ADR-0003 are written `Proposed` and are expected to cover the layer,
+composition, event and snapshot requirements; ADR-0004/0005 complete the
+must-have decision set.
 
 ---
 
@@ -798,9 +910,9 @@ build the formal traceability matrix after they are written.
 
 | Priority | ADR | Covers / unblocks |
 |---|---|---|
-| **1** | **ADR-0001 — Layered boundaries and pure C# core.** Presentation → Feature → Core → Foundation; Core/Foundation do not reference Godot; Table splits into Layout + View; DI instead of global singletons. | Dependency rules for all 76 requirements; unblocks unit testing and parallel implementation of every module. |
-| **2** | **ADR-0002 — Session composition, model ownership, and event contract.** One `CardDeckModel` instance; `GameBootstrap` wiring; direct typed C# events; State↔Undo decoupled via `IUndoHistory` + `UndoPerformed`; single-threaded synchronous flow. | State 001/003/008, Undo 003/006, Statistics 002/007, Drag 005/006/008, Table 005/008, Toolbar 009. |
-| **3** | **ADR-0003 — Model snapshot and serialization schema.** Immutable `ModelSnapshot`, `Revision`, schema version, atomic restore, `ImmutableArray`, invariant validation on load. | Card 001–006/008, Undo 001/005/006, State 005, Deal 004. |
+| **1** | **ADR-0001 — Layered boundaries and pure C# core.** *(written, Proposed)* Presentation → Feature → Core → Foundation; Core/Foundation do not reference Godot; Table splits into Layout + View; DI instead of global singletons. | Dependency rules for all 76 requirements; unblocks unit testing and parallel implementation of every module. |
+| **2** | **ADR-0002 — Session composition, model ownership, and event contract.** *(written, Proposed)* One `CardDeckModel` instance; `GameBootstrap` constructs and `GameSession` wires; direct typed C# events; State↔Undo decoupled via `IUndoHistory` + `UndoPerformed`; shared `CommandGate`; single-threaded synchronous flow. | State 001/003/008, Undo 003/006, Statistics 002/007, Drag 005/006/008, Table 005/008, Toolbar 009. |
+| **3** | **ADR-0003 — Model snapshot and serialization schema.** *(written, Proposed)* Immutable `ModelSnapshot`, `Revision`, schema version, atomic restore, structural sharing, explicit DTOs, invariant validation on load. | Card 001–006/008, Undo 001/005/006, State 005, Deal 004. |
 | **4** | **ADR-0004 — Window stretch and coordinate model.** `stretch/mode="disabled"`; manual 1280×720 letterbox; menu bar in window coordinates; Table Layout in logical coordinates; minimum window 1024×576. | Table 001/006/007/008, Toolbar 001/003/004/009, Drag 002/008. **HIGH RISK — verify against 4.7 stretch defaults.** |
 | **5** | **ADR-0005 — C# test execution strategy.** Pure C# core tests (xUnit or gdUnit4 C#); Godot integration tests (gdUnit4 headless); screenshot evidence paths; CI command. | Verification method for every logic requirement; unblocks `/test-setup` and the first story. |
 

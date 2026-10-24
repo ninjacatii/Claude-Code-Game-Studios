@@ -43,7 +43,7 @@ Game State Machine 拥有空当接龙的当前局号与生命周期：没有牌�
 - `next_deal()` / `previous_deal()`：按边界钳制；目标与当前 N 不同则调用 `new_game`，相同则返回 `AT_LIMIT`（不重新发牌）。
 - `select_deal(N)`：若 N = 当前 N → `restart_deal()`；否则 `new_game(N)`。
 - `on_move_applied(result)`：一次合法移动执行后，重新判定状态。
-- `on_undo_applied()`：一次撤销恢复模型后，重新判定状态。
+- `OnUndoPerformed(UndoPerformed e)`：订阅 Undo 的 `UndoPerformed` 事件，在一次撤销恢复模型后重新判定状态；由 GameSession 接线，Undo 不直接调用 State。
 - `load_game(snapshot)`：恢复模型与 N，重新判定，发出 `GameLoaded`。
 - `snapshot()`：返回 N + 模型 + 状态；序列化由 Save/Resume 负责。`NoGame` / `Dealing` / `Restoring` 时返回 `GAME_NOT_READY`。
 - `can_accept_moves()`：仅 `Playing` 为 true。
@@ -56,13 +56,13 @@ Game State Machine 拥有空当接龙的当前局号与生命周期：没有牌�
 | `NoGame` | `new_game(N)` | `Dealing` → `Playing` | N 合法 |
 | `Playing` | `new_game` / `restart` / `next` / `prev` | `Dealing` → `Playing` | N 合法/存在 |
 | `Playing` | `on_move_applied` | `Playing` / `Won` / `Stuck` | 移动已合法执行 |
-| `Playing` | `on_undo_applied` | `Playing` / `Won` / `Stuck` | 撤销已执行 |
+| `Playing` | `OnUndoPerformed` | `Playing` / `Won` / `Stuck` | 撤销已执行 |
 | `Won` | `new_game` / `restart` / `next` / `prev` | `Dealing` → `Playing` | 允许 |
 | `Won` | `on_move_applied` | `Won` | 拒绝 `MOVES_NOT_ACCEPTED` |
-| `Won` | `on_undo_applied` | `Won` | 拒绝 `GAME_ALREADY_WON` |
+| `Won` | `OnUndoPerformed` | `Won` | 不应发生；Undo 在 `Won` 已返回 `UNDO_NOT_ALLOWED` |
 | `Stuck` | `new_game` / `restart` / `next` / `prev` | `Dealing` → `Playing` | 允许 |
 | `Stuck` | `on_move_applied` | `Stuck` | 拒绝 `MOVES_NOT_ACCEPTED` |
-| `Stuck` | `on_undo_applied` | `Playing` / `Won` / `Stuck` | 允许 |
+| `Stuck` | `OnUndoPerformed` | `Playing` / `Won` / `Stuck` | 允许 |
 | `NoGame` / `Playing` / `Won` / `Stuck` | `load_game(snapshot)` | `Playing` / `Won` / `Stuck` | 快照合法；`Dealing` / `Restoring` 返回 `COMMAND_IN_PROGRESS` |
 | `NoGame` | `restart` / `next` / `prev` / `undo` | `NoGame` | `NO_CURRENT_GAME` |
 
@@ -85,9 +85,10 @@ Game State Machine 拥有空当接龙的当前局号与生命周期：没有牌�
 **7. 事件**
 
 - `GameStarted { N }`、`GameRestarted { N }`、`GameWon { N }`、`GameStuck { N }`、`GameLoaded { N }`、`StateChanged { from, to }`。
-- 事件在状态更新之后同步发出；不使用异步队列。
-- `GameWon` / `GameStuck` 每次进入终态只发一次；重复的 `on_move_applied` 不重复发。
-- Statistics 消费 `GameStarted` 与 `GameWon`；Animation/Audio 消费终态事件；Toolbar 读 `StateChanged`。
+- 事件在状态更新之后同步发出；不使用异步队列。命令内部先发 `StateChanged`（仅当 `from ≠ to`），再发具体事件；`Dealing` / `Restoring` 瞬态不对外发布。
+- `GameStarted` / `GameRestarted` / `GameLoaded` 每个成功命令恰好一次。
+- `GameWon` / `GameStuck` 每次由移动或撤销进入终态只发一次；重复的 `on_move_applied` 不重复发。读档进入已胜利/已卡死状态只发 `StateChanged`（若状态变化）与 `GameLoaded`，**不发** `GameWon` / `GameStuck`。
+- Statistics 消费 `GameStarted` 与 `GameWon`；Animation/Audio 消费终态事件；Toolbar 用 `GameWon` / `GameStuck` 打开 Won 对话框/Stuck 横幅，用 `StateChanged` 刷新命令与关闭视图。
 
 **8. 协调**
 
@@ -139,7 +140,7 @@ NoGame/Playing/Won/Stuck --load_game(valid)--> Playing | Won | Stuck
 - `next_deal() -> Result`
 - `previous_deal() -> Result`
 - `on_move_applied(MoveResult) -> Result`
-- `on_undo_applied() -> Result`
+- `OnUndoPerformed(UndoPerformed) -> void`
 - `load_game(snapshot) -> Result`
 - `snapshot() -> GameSnapshot | error`（`NoGame` / `Dealing` / `Restoring` 返回 `GAME_NOT_READY`）
 - `get_state() -> State`
@@ -234,8 +235,8 @@ The can_accept_moves formula is defined as:
 - **If `previous_deal` 在 N = 1**: 返回 `AT_LIMIT`，不重新发牌，状态与 Undo 不变。
 - **If `on_move_applied` 在 `Won` 或 `Stuck`**: 返回 `MOVES_NOT_ACCEPTED`，状态不变。
 - **If `on_move_applied` 在 `NoGame`**: 返回 `NO_CURRENT_GAME`，状态不变。
-- **If `on_undo_applied` 在 `Won`**: 返回 `GAME_ALREADY_WON`，状态不变；胜利后不允许撤销。
-- **If `on_undo_applied` 在 `Stuck`**: 允许；重新判定后进入 `Playing` / `Won` / `Stuck`。
+- **If `OnUndoPerformed` 在 `Won`**: 不应发生；Undo 在 `Won` 时已返回 `UNDO_NOT_ALLOWED`，不发出 `UndoPerformed`。若被误调用，记录错误并保持状态不变。
+- **If `OnUndoPerformed` 在 `Stuck`**: 允许；重新判定后进入 `Playing` / `Won` / `Stuck`。
 - **If `won = 1` 且 `stuck = 1`**: 返回 `Won`；胜利优先。
 - **If 读档快照无效或算法版本不匹配**: 返回 `INVALID_SNAPSHOT`，状态不变。
 - **If 读档模型不变量校验失败**: 返回 `MODEL_INVARIANT_FAILED`，状态不变。
@@ -268,7 +269,7 @@ The can_accept_moves formula is defined as:
 |------|------|------|------|
 | Drag & Drop Interaction | Hard | `can_accept_moves` / `on_move_applied` | 只在 `Playing` 接受移动 |
 | Toolbar & Menus | Hard | `new_game` / `restart` / `next` / `prev` / `select_deal` | 命令与错误展示 |
-| Undo History | Hard | `on_undo_applied` / `clear` | 新局/重开/读档清空历史 |
+| Undo History | Hard（事件） | `UndoPerformed` / `clear` | State 订阅并执行 `OnUndoPerformed`；新局/重开/读档清空历史 |
 | Statistics & Records | Soft | `GameStarted` / `GameWon` | 只消费事件，不写模型 |
 | Save/Resume Game | Hard | `snapshot` / `load_game` | Save 拥有格式，State 拥有 N/状态 |
 | Table Rendering / Animation / Audio | Soft | 状态/事件 | 终态反馈 |
@@ -282,7 +283,7 @@ The can_accept_moves formula is defined as:
 - `previous_deal() -> Result`
 - `select_deal(N) -> Result`
 - `on_move_applied(MoveResult) -> Result`
-- `on_undo_applied() -> Result`
+- `OnUndoPerformed(UndoPerformed) -> void`
 - `load_game(snapshot) -> Result`
 - `snapshot() -> GameSnapshot | error`
 - `get_state() -> State`
@@ -293,9 +294,9 @@ The can_accept_moves formula is defined as:
 **Provisional assumptions（下游未设计，先假定）**：
 
 - Drag & Drop 只在 Rules 返回 `legal = true` 并执行模型移动后调用 `on_move_applied`。
-- Undo History 在收到 `clear` 后清空；撤销执行后调用 `on_undo_applied`。
+- Undo History 在收到 `clear` 后清空；撤销成功后发出 `UndoPerformed`，State 订阅并执行 `OnUndoPerformed`。
 - Statistics 提供 `on_game_started(N)` 与 `on_game_won(N)`。`GameWon` 对同一活动局实例幂等（重复投递不重复计数）；`GameStarted` 对每个成功的 `new_game` 命令恰好发出一次，Statistics 不按 N 去重——同一 N 的 `new_game(N)` 是合法新局，必须计为一局。
-- Save/Resume 保存 `GameSnapshot`（N + 模型 + 状态 + 算法版本），恢复前校验版本。
+- Save/Resume 保存完整 `GameSnapshot`（`SchemaVersion` + 算法版本 + N + 状态 + 模型），恢复前校验 schema、算法版本与模型不变量；失败按 ADR-0003 的映射返回 `INVALID_SNAPSHOT` / `MODEL_INVARIANT_FAILED`，不尝试迁移。
 - Toolbar 负责首次启动的 N（默认 1 或上次存档），State 不生成随机局号。
 
 **Registry references**：`deal_number_min`、`deal_number_max`、`game_completion`、`is_stuck`、`legal_move_count` 的 `referenced_by` 应追加 `design/gdd/game-state-machine.md`（Phase 5b 更新）。
@@ -319,7 +320,7 @@ Toolbar & Menus 调用命令并显示错误；`Won` / `Stuck` 由 UI 显示覆�
 | Deal Generator | `generate(N)`、局号范围、算法版本 | GDD 已完成 |
 | Card & Deck Model | `deal` / `snapshot` / `restore` | GDD 已完成 |
 | Rules & Move Validator | `is_won` / `is_stuck` / `legal_moves` | GDD 已完成 |
-| Undo History | `clear` / `on_undo_applied` | GDD 已完成（design/gdd/undo-history.md） |
+| Undo History | `clear` / `UndoPerformed` 事件 | GDD 已完成（design/gdd/undo-history.md） |
 | Statistics & Records | `GameStarted` / `GameWon` | GDD 已完成（design/gdd/statistics-records.md） |
 | Save/Resume Game | `snapshot` / `load_game` | GDD 未编写 |
 | Toolbar & Menus | 命令与状态 | GDD 已完成（design/gdd/toolbar-menus.md） |
@@ -333,7 +334,7 @@ Toolbar & Menus 调用命令并显示错误；`Won` / `Stuck` 由 UI 显示覆�
 - **GIVEN** `NoGame`，**WHEN** `new_game(N)` 且 N 合法，**THEN** 经 `Dealing` 进入 `Playing`、`get_deal_number() = N`、Undo 清空、发出 `GameStarted{N}`。
 - **GIVEN** 当前 N，**WHEN** `select_deal(N)`（同 N），**THEN** 路由为 `restart_deal()`：同 N 重发、Undo 清空、发出 `GameRestarted`，不发 `GameStarted`；**GIVEN** `select_deal(M)` 且 `M ≠ N`，**THEN** 发出 `GameStarted`。
 - **GIVEN** `NoGame`，**WHEN** `new_game(N)` 且 N 越界或非法，**THEN** 返回 `DEAL_NUMBER_OUT_OF_RANGE` / `INVALID_DEAL_NUMBER`，状态与 Undo 均不变。
-- **GIVEN** `NoGame`，**WHEN** 调用 `restart_deal` / `next_deal` / `previous_deal` / `on_undo_applied`，**THEN** 返回 `NO_CURRENT_GAME`，状态不变。
+- **GIVEN** `NoGame`，**WHEN** 调用 `restart_deal` / `next_deal` / `previous_deal` / Undo 的撤销命令，**THEN** 返回 `NO_CURRENT_GAME`，状态不变；Undo 不发出 `UndoPerformed`。
 - **GIVEN** `Playing` 且 N=1,000,000，**WHEN** `next_deal()`，**THEN** 返回 `AT_LIMIT`，不重新发牌，状态与 Undo 不变；**GIVEN** `Playing` 且 N=1，**WHEN** `previous_deal()`，**THEN** 同样返回 `AT_LIMIT`。
 - **GIVEN** 当前 N，**WHEN** 计算 `next_deal`，**THEN** `clamp(N+1, 1, 1,000,000)`：N=1→2；N=999,999→1,000,000（正常重新发牌）；N=1,000,000→1,000,000 且返回 `AT_LIMIT`；不回绕。
 - **GIVEN** 当前 N，**WHEN** 计算 `previous_deal`，**THEN** `clamp(N−1, 1, 1,000,000)`：N=42→41；N=2→1（正常重新发牌）；N=1→1 且返回 `AT_LIMIT`；不回绕。
@@ -343,7 +344,7 @@ Toolbar & Menus 调用命令并显示错误；`Won` / `Stuck` 由 UI 显示覆�
 ### 移动、撤销与终态
 
 - **GIVEN** `Playing` 且一次移动已由 Rules 执行，**WHEN** `on_move_applied(result)`，**THEN** 按 `Rules.is_won` / `is_stuck` 进入 `Playing`、`Won` 或 `Stuck`；`won=1` 且 `stuck=1` 时进入 `Won`（胜利优先）。
-- **GIVEN** `Won` 或 `Stuck`，**WHEN** `on_move_applied`，**THEN** 返回 `MOVES_NOT_ACCEPTED`，状态不变。**GIVEN** `Stuck`，**WHEN** `on_undo_applied`，**THEN** 允许撤销并重判为 `Playing` / `Won` / `Stuck`。**GIVEN** `Won`，**WHEN** `on_undo_applied`，**THEN** 返回 `GAME_ALREADY_WON`，状态不变。
+- **GIVEN** `Won` 或 `Stuck`，**WHEN** `on_move_applied`，**THEN** 返回 `MOVES_NOT_ACCEPTED`，状态不变。**GIVEN** `Stuck`，**WHEN** 撤销成功并发出 `UndoPerformed`，**THEN** `OnUndoPerformed` 重判为 `Playing` / `Won` / `Stuck`。**GIVEN** `Won`，**WHEN** 请求撤销，**THEN** Undo 返回 `UNDO_NOT_ALLOWED`，不发 `UndoPerformed`，状态不变。
 - **GIVEN** 进入 `Won` 或 `Stuck`，**THEN** `GameWon` / `GameStuck` 每次进入只发一次；重复 `on_move_applied` 不重复发；Statistics 只记录一次 `GameWon`。
 
 ### 读档与保存

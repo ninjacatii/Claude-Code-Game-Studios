@@ -175,3 +175,11 @@ $RECYCLE.BIN/
 # the project root. Anchored so a reports/ folder elsewhere stays tracked.
 /reports/
 /test-results/
+
+# === Engine: Godot (C#) project files ===
+# The Unity section above ignores *.csproj and *.sln without anchoring, which
+# would also hide the Godot C# project and its test project. Re-include the
+# project files this repository actually uses.
+!FreeCell.csproj
+!FreeCell.sln
+!tests/**/*.csproj

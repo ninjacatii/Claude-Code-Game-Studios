@@ -54,7 +54,7 @@
 #   in any other shape is reported as unsupported layout, with its number.
 
 version: 1
-last_updated: ""
+last_updated: 2026-10-24
 
 # ─── ENTITIES ────────────────────────────────────────────────────────────────
 # Named game-world objects: enemies, NPCs, characters, factions, bosses.
@@ -123,7 +123,424 @@ items: []
 #   output_range[min, max], added
 # Optional: expression (the actual formula), notes
 
-formulas: []
+formulas:
+  - name: deal_column_height
+    status: active
+    source: design/gdd/card-deck-model.md
+    referenced_by:
+      - design/gdd/card-deck-model.md
+      - design/gdd/deal-generator.md
+    variables:
+      - i
+      - deck_size
+      - tableau_count
+    output_range: [6, 7]
+    expression: "base_height + 1 if i <= remainder, else base_height; base_height = floor(deck_size / tableau_count); remainder = deck_size mod tableau_count"
+    added: 2026-10-24
+    revised: ""
+
+  - name: deal_start_index
+    status: active
+    source: design/gdd/card-deck-model.md
+    referenced_by:
+      - design/gdd/card-deck-model.md
+      - design/gdd/deal-generator.md
+    variables:
+      - i
+      - deal_column_height
+    output_range: [0, 46]
+    expression: "sum(deal_column_height(j), j=1..i-1); deal_start_index(1)=0"
+    added: 2026-10-24
+    revised: ""
+
+  - name: empty_free_cell_count
+    status: active
+    source: design/gdd/card-deck-model.md
+    referenced_by:
+      - design/gdd/card-deck-model.md
+      - design/gdd/rules-move-validator.md
+    variables:
+      - free_cell_count
+      - occupied
+    output_range: [0, 4]
+    expression: "free_cell_count - sum(occupied(f), f=1..free_cell_count)"
+    added: 2026-10-24
+    revised: ""
+
+  - name: empty_tableau_column_count
+    status: active
+    source: design/gdd/card-deck-model.md
+    referenced_by:
+      - design/gdd/card-deck-model.md
+      - design/gdd/rules-move-validator.md
+    variables:
+      - tableau_count
+      - non_empty
+    output_range: [0, 8]
+    expression: "tableau_count - sum(non_empty(i), i=1..tableau_count); non_empty(i)=1 if column_height(i)>0 else 0"
+    added: 2026-10-24
+    revised: ""
+
+  - name: foundation_height
+    status: active
+    source: design/gdd/card-deck-model.md
+    referenced_by:
+      - design/gdd/card-deck-model.md
+      - design/gdd/rules-move-validator.md
+    variables:
+      - foundation_empty
+      - top_rank
+    output_range: [0, 13]
+    expression: "top_rank(f) if foundation_empty(f)=false else 0"
+    added: 2026-10-24
+    revised: ""
+
+  - name: game_completion
+    status: active
+    source: design/gdd/card-deck-model.md
+    referenced_by:
+      - design/gdd/card-deck-model.md
+      - design/gdd/rules-move-validator.md
+      - design/gdd/game-state-machine.md
+      - design/gdd/hint-system.md
+    variables:
+      - foundation_height
+      - deck_size
+    output_range: [0, 1]
+    expression: "sum(foundation_height(f), f=1..4) = deck_size"
+    notes: "Boolean; 1 = complete, 0 = not complete. Compare integers only."
+    added: 2026-10-24
+    revised: ""
+
+  - name: deck_index
+    status: active
+    source: design/gdd/deal-generator.md
+    referenced_by:
+      - design/gdd/deal-generator.md
+    variables:
+      - rank
+      - suit
+    output_range: [0, 51]
+    expression: "(rank - 1) * 4 + suit_index(suit); suit_index C=0,D=1,H=2,S=3"
+    added: 2026-10-24
+    revised: ""
+
+  - name: lcg_next
+    status: active
+    source: design/gdd/deal-generator.md
+    referenced_by:
+      - design/gdd/deal-generator.md
+    variables:
+      - state
+    output_range: [0, 2147483647]
+    expression: "(214013 * state + 2531011) mod 2^31"
+    added: 2026-10-24
+    revised: ""
+
+  - name: lcg_rand
+    status: active
+    source: design/gdd/deal-generator.md
+    referenced_by:
+      - design/gdd/deal-generator.md
+    variables:
+      - state
+    output_range: [0, 32767]
+    expression: "floor(state / 2^16)"
+    added: 2026-10-24
+    revised: ""
+
+  - name: draw_index
+    status: active
+    source: design/gdd/deal-generator.md
+    referenced_by:
+      - design/gdd/deal-generator.md
+    variables:
+      - i
+      - rand
+    output_range: [0, 51]
+    expression: "rand mod (52 - i)"
+    added: 2026-10-24
+    revised: ""
+
+  - name: column_major_sequence
+    status: active
+    source: design/gdd/deal-generator.md
+    referenced_by:
+      - design/gdd/deal-generator.md
+    variables:
+      - dealt
+      - deal_start_index
+      - deal_column_height
+    output_range: [0, 51]
+    expression: "sequence[deal_start_index(c) + r] = dealt[8*r + (c-1)]"
+    added: 2026-10-24
+    revised: ""
+
+  - name: valid_sequence
+    status: active
+    source: design/gdd/rules-move-validator.md
+    referenced_by:
+      - design/gdd/rules-move-validator.md
+    variables:
+      - column
+      - count
+    output_range: [0, 1]
+    expression: "1 if 1 <= count <= height(column) and every adjacent pair descends by 1 with alternating color, else 0"
+    added: 2026-10-24
+    revised: ""
+
+  - name: max_sequence_length
+    status: active
+    source: design/gdd/rules-move-validator.md
+    referenced_by:
+      - design/gdd/rules-move-validator.md
+      - design/gdd/drag-drop-interaction.md
+    variables:
+      - column
+    output_range: [0, 13]
+    expression: "0 if height(column)=0 else 1 + trailing_links(column)"
+    added: 2026-10-24
+    revised: ""
+
+  - name: tableau_accepts
+    status: active
+    source: design/gdd/rules-move-validator.md
+    referenced_by:
+      - design/gdd/rules-move-validator.md
+    variables:
+      - destination
+      - card
+    output_range: [0, 1]
+    expression: "1 if destination empty or top rank = card rank + 1 and opposite color, else 0"
+    added: 2026-10-24
+    revised: ""
+
+  - name: foundation_accepts
+    status: active
+    source: design/gdd/rules-move-validator.md
+    referenced_by:
+      - design/gdd/rules-move-validator.md
+    variables:
+      - foundation
+      - card
+    output_range: [0, 1]
+    expression: "1 if card suit = foundation suit and card rank = foundation_height + 1, else 0"
+    added: 2026-10-24
+    revised: ""
+
+  - name: foundation_next_rank
+    status: active
+    source: design/gdd/rules-move-validator.md
+    referenced_by:
+      - design/gdd/rules-move-validator.md
+    variables:
+      - suit
+    output_range: [1, 14]
+    expression: "foundation_height(suit) + 1"
+    notes: "14 is the completed sentinel; never clamp to 13."
+    added: 2026-10-24
+    revised: ""
+
+  - name: supermove_capacity
+    status: active
+    source: design/gdd/rules-move-validator.md
+    referenced_by:
+      - design/gdd/rules-move-validator.md
+    variables:
+      - F
+      - E
+      - destination_empty
+    output_range: [1, 1280]
+    expression: "(F+1)*2^E if destination non-empty; (F+1)*2^(E-1) if destination empty and E>=1; INVALID_MODEL if destination empty and E=0"
+    added: 2026-10-24
+    revised: ""
+
+  - name: max_movable_length
+    status: active
+    source: design/gdd/rules-move-validator.md
+    referenced_by:
+      - design/gdd/rules-move-validator.md
+    variables:
+      - source
+      - destination
+    output_range: [0, 13]
+    expression: "0 if source empty; 1 if max_sequence_length=1; else min(max_sequence_length, 13, supermove_capacity)"
+    added: 2026-10-24
+    revised: ""
+
+  - name: legal_move_count
+    status: active
+    source: design/gdd/rules-move-validator.md
+    referenced_by:
+      - design/gdd/rules-move-validator.md
+      - design/gdd/game-state-machine.md
+      - design/gdd/hint-system.md
+    variables:
+      - model
+    output_range: [0, 768]
+    expression: "count(legal_moves(model))"
+    notes: "Free cells are enumerated per cell, not per category."
+    added: 2026-10-24
+    revised: ""
+
+  - name: is_stuck
+    status: active
+    source: design/gdd/rules-move-validator.md
+    referenced_by:
+      - design/gdd/rules-move-validator.md
+      - design/gdd/game-state-machine.md
+    variables:
+      - model
+    output_range: [0, 1]
+    expression: "1 if game_completion=0 and legal_move_count=0, else 0"
+    added: 2026-10-24
+    revised: ""
+
+  - name: next_deal
+    status: active
+    source: design/gdd/game-state-machine.md
+    referenced_by:
+      - design/gdd/game-state-machine.md
+    variables:
+      - N
+    output_range: [1, 1000000]
+    expression: "clamp(N + 1, deal_number_min, deal_number_max)"
+    notes: "AT_LIMIT when the target equals the current N; no wraparound."
+    added: 2026-10-24
+    revised: ""
+
+  - name: previous_deal
+    status: active
+    source: design/gdd/game-state-machine.md
+    referenced_by:
+      - design/gdd/game-state-machine.md
+    variables:
+      - N
+    output_range: [1, 1000000]
+    expression: "clamp(N - 1, deal_number_min, deal_number_max)"
+    notes: "AT_LIMIT when the target equals the current N; no wraparound."
+    added: 2026-10-24
+    revised: ""
+
+  - name: state_after_evaluation
+    status: active
+    source: design/gdd/game-state-machine.md
+    referenced_by:
+      - design/gdd/game-state-machine.md
+    variables:
+      - won
+      - stuck
+    output_range: [0, 2]
+    expression: "Won if won=1; Stuck if won=0 and stuck=1; Playing otherwise"
+    notes: "Enum mapping; 0=Playing, 1=Stuck, 2=Won for registry range purposes. Win takes precedence."
+    added: 2026-10-24
+    revised: ""
+
+  - name: can_accept_moves
+    status: active
+    source: design/gdd/game-state-machine.md
+    referenced_by:
+      - design/gdd/game-state-machine.md
+    variables:
+      - state
+    output_range: [0, 1]
+    expression: "1 if state = Playing, else 0"
+    added: 2026-10-24
+    revised: ""
+
+  - name: drag_unit_length
+    status: active
+    source: design/gdd/drag-drop-interaction.md
+    referenced_by:
+      - design/gdd/drag-drop-interaction.md
+    variables:
+      - clicked_index
+      - top_index
+    output_range: [1, 13]
+    expression: "top_index - clicked_index + 1"
+    added: 2026-10-24
+    revised: ""
+
+  - name: hint_tier
+    status: active
+    source: design/gdd/hint-system.md
+    referenced_by:
+      - design/gdd/hint-system.md
+    variables:
+      - move
+      - model
+    output_range: [0, 5]
+    expression: "0 if source tableau -> empty tableau and count = height(source); else 1 if destination foundation; else 2 if source tableau -> non-empty tableau and count = height(source); else 3 if source free_cell -> non-empty tableau; else 4 if source tableau -> non-empty tableau and count < height(source); else 5"
+    notes: "0 = excluded pure column permutation; 1-5 = priority tiers. Ties resolved by enumeration_index."
+    added: 2026-10-24
+    revised: ""
+
+  - name: hint_ranked_moves
+    status: active
+    source: design/gdd/hint-system.md
+    referenced_by:
+      - design/gdd/hint-system.md
+    variables:
+      - model
+    output_range: [0, 768]
+    expression: "sort_ascending([m for m in legal_moves(model) if hint_tier(m, model) > 0], key=(hint_tier, enumeration_index))"
+    notes: "Output is Move[]; output_range is its length. enumeration_index is the 0-based index in the unfiltered legal_moves list."
+    added: 2026-10-24
+    revised: ""
+
+  - name: hint_candidate_count
+    status: active
+    source: design/gdd/hint-system.md
+    referenced_by:
+      - design/gdd/hint-system.md
+    variables:
+      - model
+    output_range: [0, 768]
+    expression: "|hint_ranked_moves(model)|"
+    notes: "Distinct from legal_move_count; smaller when pure column permutations are excluded."
+    added: 2026-10-24
+    revised: ""
+
+  - name: hint_cycle_index
+    status: active
+    source: design/gdd/hint-system.md
+    referenced_by:
+      - design/gdd/hint-system.md
+    variables:
+      - previous_cursor
+      - candidate_count
+      - same_candidate_list
+    output_range: [-1, 767]
+    expression: "-1 if candidate_count = 0; 0 if same_candidate_list = 0; (previous_cursor + 1) mod candidate_count otherwise"
+    added: 2026-10-24
+    revised: ""
+
+  - name: hint_available
+    status: active
+    source: design/gdd/hint-system.md
+    referenced_by:
+      - design/gdd/hint-system.md
+    variables:
+      - model
+    output_range: [0, 1]
+    expression: "1 if game_completion(model) = 0 and hint_candidate_count(model) > 0, else 0"
+    added: 2026-10-24
+    revised: ""
+
+  - name: win_rate
+    status: active
+    source: design/gdd/statistics-records.md
+    referenced_by:
+      - design/gdd/statistics-records.md
+      - design/gdd/toolbar-menus.md
+    variables:
+      - games_played
+      - games_won
+    output_range: [0, 1]
+    expression: "0 if games_played = 0 else games_won / games_played"
+    notes: "Derived, never stored; real division (float64); UI formats as percentage."
+    added: 2026-10-24
+    revised: ""
 
 # Example:
 #
@@ -156,7 +573,228 @@ formulas: []
 #
 # Required fields: name, status, source, referenced_by, value, unit, added
 
-constants: []
+constants:
+  - name: suit_count
+    status: active
+    source: design/gdd/card-deck-model.md
+    referenced_by:
+      - design/gdd/card-deck-model.md
+      - design/gdd/rules-move-validator.md
+    value: 4
+    unit: suits
+    added: 2026-10-24
+    revised: ""
+
+  - name: rank_count_per_suit
+    status: active
+    source: design/gdd/card-deck-model.md
+    referenced_by:
+      - design/gdd/card-deck-model.md
+      - design/gdd/rules-move-validator.md
+    value: 13
+    unit: ranks
+    added: 2026-10-24
+    revised: ""
+
+  - name: tableau_count
+    status: active
+    source: design/gdd/card-deck-model.md
+    referenced_by:
+      - design/gdd/card-deck-model.md
+      - design/gdd/rules-move-validator.md
+      - design/gdd/hint-system.md
+    value: 8
+    unit: columns
+    added: 2026-10-24
+    revised: ""
+
+  - name: free_cell_count
+    status: active
+    source: design/gdd/card-deck-model.md
+    referenced_by:
+      - design/gdd/card-deck-model.md
+    value: 4
+    unit: cells
+    added: 2026-10-24
+    revised: ""
+
+  - name: deck_size
+    status: active
+    source: design/gdd/card-deck-model.md
+    referenced_by:
+      - design/gdd/card-deck-model.md
+    value: 52
+    unit: cards
+    added: 2026-10-24
+    revised: ""
+
+  - name: card_color
+    status: active
+    source: design/gdd/card-deck-model.md
+    referenced_by:
+      - design/gdd/card-deck-model.md
+      - design/gdd/rules-move-validator.md
+    value: "D,H=Red; C,S=Black"
+    unit: mapping
+    added: 2026-10-24
+    revised: ""
+
+  - name: card_color_mapping
+    status: deprecated
+    source: design/gdd/card-deck-model.md
+    referenced_by:
+      - design/gdd/card-deck-model.md
+    value: "D,H=Red; C,S=Black"
+    unit: mapping
+    added: 2026-10-24
+    revised: 2026-10-24
+    notes: "Renamed to card_color to match the GDD formula name; kept for history."
+
+  - name: deal_number_min
+    status: active
+    source: design/gdd/deal-generator.md
+    referenced_by:
+      - design/gdd/deal-generator.md
+      - design/gdd/game-state-machine.md
+      - design/gdd/toolbar-menus.md
+    value: 1
+    unit: deal_number
+    added: 2026-10-24
+    revised: ""
+
+  - name: deal_number_max
+    status: active
+    source: design/gdd/deal-generator.md
+    referenced_by:
+      - design/gdd/deal-generator.md
+      - design/gdd/game-state-machine.md
+      - design/gdd/toolbar-menus.md
+    value: 1000000
+    unit: deal_number
+    added: 2026-10-24
+    revised: ""
+
+  - name: drag_threshold
+    status: active
+    source: design/gdd/drag-drop-interaction.md
+    referenced_by:
+      - design/gdd/drag-drop-interaction.md
+    value: 4
+    unit: logical_px
+    added: 2026-10-24
+    revised: ""
+
+  - name: snap_back_duration
+    status: active
+    source: design/gdd/drag-drop-interaction.md
+    referenced_by:
+      - design/gdd/drag-drop-interaction.md
+    value: 120
+    unit: ms
+    added: 2026-10-24
+    revised: ""
+
+  - name: base_canvas_width
+    status: active
+    source: design/gdd/table-rendering-layout.md
+    referenced_by:
+      - design/gdd/table-rendering-layout.md
+    value: 1280
+    unit: logical_px
+    added: 2026-10-24
+    revised: ""
+
+  - name: base_canvas_height
+    status: active
+    source: design/gdd/table-rendering-layout.md
+    referenced_by:
+      - design/gdd/table-rendering-layout.md
+    value: 720
+    unit: logical_px
+    added: 2026-10-24
+    revised: ""
+
+  - name: card_width
+    status: active
+    source: design/gdd/table-rendering-layout.md
+    referenced_by:
+      - design/gdd/table-rendering-layout.md
+    value: 140
+    unit: logical_px
+    added: 2026-10-24
+    revised: ""
+
+  - name: card_height
+    status: active
+    source: design/gdd/table-rendering-layout.md
+    referenced_by:
+      - design/gdd/table-rendering-layout.md
+    value: 190
+    unit: logical_px
+    added: 2026-10-24
+    revised: ""
+
+  - name: column_pitch
+    status: active
+    source: design/gdd/table-rendering-layout.md
+    referenced_by:
+      - design/gdd/table-rendering-layout.md
+    value: 152
+    unit: logical_px
+    added: 2026-10-24
+    revised: ""
+
+  - name: margin_x
+    status: active
+    source: design/gdd/table-rendering-layout.md
+    referenced_by:
+      - design/gdd/table-rendering-layout.md
+    value: 38
+    unit: logical_px
+    added: 2026-10-24
+    revised: ""
+
+  - name: top_y
+    status: active
+    source: design/gdd/table-rendering-layout.md
+    referenced_by:
+      - design/gdd/table-rendering-layout.md
+      - design/gdd/toolbar-menus.md
+    value: 38
+    unit: logical_px
+    added: 2026-10-24
+    revised: ""
+
+  - name: tableau_y0
+    status: active
+    source: design/gdd/table-rendering-layout.md
+    referenced_by:
+      - design/gdd/table-rendering-layout.md
+    value: 256
+    unit: logical_px
+    added: 2026-10-24
+    revised: ""
+
+  - name: cascade_max
+    status: active
+    source: design/gdd/table-rendering-layout.md
+    referenced_by:
+      - design/gdd/table-rendering-layout.md
+    value: 30
+    unit: logical_px
+    added: 2026-10-24
+    revised: ""
+
+  - name: min_scale
+    status: active
+    source: design/gdd/table-rendering-layout.md
+    referenced_by:
+      - design/gdd/table-rendering-layout.md
+      - design/gdd/toolbar-menus.md
+    value: 0.8
+    unit: ratio
+    added: 2026-10-24
+    revised: ""
 
 # Example:
 #

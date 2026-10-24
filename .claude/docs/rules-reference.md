@@ -53,6 +53,7 @@ each rule's own globs list the case variants (`{AI,Ai,ai}`).
 | `scene-files.md` | `**/*.tscn`, `**/*.tres` · `**/*.unity`, `**/*.prefab`, `Assets/**/*.asset` · — | Hand-edit limits for editor-written scene and asset files; Unreal `.uasset`/`.umap` are binary, and `settings.json` denies edits to them |
 | `agent-memory.md` | `.claude/agent-memory/**` | The one place an agent may write unasked — and why a temporary absence must never be recorded as a durable fact |
 | `skill-authoring.md` | `.claude/skills/**`, `.claude/agents/**` | A check must be able to report that it did not run — the five obligations for verdicts, defaults, skips, sourcing and derived coverage |
+| `language.md` | *(no paths — loads every session)* | Chinese (Simplified) default for conversation and generated documents; code, identifiers and existing English docs excepted |
 
 Each engine-facing rule loads on all three engines:
 
